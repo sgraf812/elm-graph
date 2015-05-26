@@ -1,4 +1,31 @@
-module Graph where
+module Graph
+    ( NodeId
+    , Node
+    , Edge
+    , Adjacency
+    , NodeContext
+    , Decomposition
+    , Graph
+
+    , empty
+    , isEmpty
+    , insert
+    , focus
+    , focusAny
+    , nodeRange
+
+    , nodeIds
+    , nodes
+    , edges
+    , fromNodesAndEdges
+
+    , fold
+    , mapContexts
+    , mapNodes
+    , mapEdges
+    
+    ) where
+    
 
 import IntDict as IntDict exposing (IntDict)
 import Maybe as Maybe exposing (Maybe)
@@ -17,7 +44,6 @@ type alias Edge e =
     , label : e 
     }
 
--- Mapping from NodeId to Edges
 type alias Adjacency e = IntDict e
 
 type alias NodeContext n e =
@@ -41,14 +67,15 @@ type Graph n e = Graph (GraphRep n e)
 empty : Graph n e
 empty = Graph IntDict.empty
 
+isEmpty : Graph n e -> Bool
+isEmpty graph = 
+    case graph of
+      Graph rep -> IntDict.isEmpty rep
 
 type alias Lens s a = 
     { get : s -> a
     , set : s -> a -> s
     }
-
-type alias Lens' s t a b = (a -> (a, b)) -> s -> (a, t)
-type alias Lens'' s a = Lens' s s a a
 
 composeLens : Lens a b -> Lens b c -> Lens a c
 composeLens outer inner =
@@ -119,6 +146,30 @@ focus node graph =
                   }
           in Maybe.map decompose (IntDict.get node rep)
 
+
+focusAny : Graph n e -> Maybe (Decomposition n e)
+focusAny graph =
+    case graph of
+        Graph rep ->
+            IntDict.findMin rep `Maybe.andThen` \(nodeId, _) ->
+            focus nodeId graph
+
+
+nodeRange : Graph n e -> Maybe (NodeId, NodeId)
+nodeRange graph =
+    case graph of
+        Graph rep ->
+            IntDict.findMin rep `Maybe.andThen` \(min, _) ->
+            IntDict.findMax rep `Maybe.andThen` \(max, _) ->
+            Just (min, max)
+            
+
+member : NodeId -> Graph n e -> Bool
+member id graph =
+    case graph of
+        Graph rep -> IntDict.member id rep
+            
+
 nodes : Graph n e -> List (Node n)
 nodes graph =
     case graph of
@@ -151,3 +202,29 @@ fromNodesAndEdges nodes edges =
                 |> IntDict.update edge.to (Maybe.map updateIncoming)
     in Graph (List.foldl addEdge nodeRep edges)
         
+
+-- TRANSFORMS
+
+
+fold : (NodeContext n e -> acc -> acc) -> acc -> Graph n e -> acc
+fold f acc graph =
+    case focusAny graph of
+        Just decomp -> fold f (f decomp.focused acc) (Lazy.force decomp.rest) 
+        Nothing -> acc
+
+
+mapContexts : (NodeContext n1 e1 -> NodeContext n2 e2) -> Graph n1 e1 -> Graph n2 e2
+mapContexts f = fold (\ctx -> insert (f ctx)) empty
+
+
+mapNodes : (n1 -> n2) -> Graph n1 e -> Graph n2 e
+mapNodes f = fold (\ctx -> insert { ctx | node <- { id = ctx.node.id, label = f ctx.node.label } }) empty
+
+             
+mapEdges : (e1 -> e2) -> Graph n e1 -> Graph n e2
+mapEdges f =
+    fold (\ctx -> insert
+                  { ctx
+                  | outgoing <- IntDict.map (\n e -> f e) ctx.outgoing
+                  , incoming <- IntDict.map (\n e -> f e) ctx.incoming })
+         empty

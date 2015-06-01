@@ -24,27 +24,49 @@ module Graph
     , mapNodes
     , mapEdges
     
+    , toString'
+    , g
     ) where
     
 
 import IntDict as IntDict exposing (IntDict)
 import Maybe as Maybe exposing (Maybe)
 import Lazy as Lazy exposing (Lazy)
+import Focus as Focus exposing (Focus, (=>))
     
 type alias NodeId = Int
+
 
 type alias Node n =
     { id : NodeId
     , label : n
     }
 
+id : Focus { record | id : field } field
+id = Focus.create .id (\update record -> { record | id <- update record.id }) 
+
+     
+label : Focus { record | label : field } field
+label = Focus.create .label (\update record -> { record | label <- update record.label }) 
+
+     
 type alias Edge e =
     { from : NodeId
     , to : NodeId
     , label : e 
     }
 
+
+from : Focus { record | from : field } field
+from = Focus.create .from (\update record -> { record | from <- update record.from }) 
+
+       
+to : Focus { record | to : field } field
+to = Focus.create .to (\update record -> { record | to <- update record.to }) 
+
+       
 type alias Adjacency e = IntDict e
+
 
 type alias NodeContext n e =
     { node : Node n
@@ -52,100 +74,103 @@ type alias NodeContext n e =
     , outgoing : Adjacency e
     }
 
+-- Lenses for NodeContext
+node : Focus { record | node : field } field
+node = Focus.create .node (\update record -> { record | node <- update record.node }) 
+
+
+incoming : Focus { record | incoming : field } field
+incoming = Focus.create .incoming (\update record -> { record | incoming <- update record.incoming }) 
+          
+
+outgoing : Focus { record | outgoing : field } field
+outgoing = Focus.create .outgoing (\update record -> { record | outgoing <- update record.outgoing }) 
+
+           
 type alias Decomposition n e =
     { focused : NodeContext n e
     , rest : Lazy (Graph n e)
     }
+
 
 -- We will only have the Patricia trie based DynGraph implementation for simplicity.
 -- Also, there is no real practical reason to separate that or to allow other implementations
 -- which would justify the complexity.
 
 type alias GraphRep n e = IntDict (NodeContext n e)
+
+    
 type Graph n e = Graph (GraphRep n e)
+
+
+unGraph : Graph n e -> GraphRep n e
+unGraph graph = case graph of Graph rep -> rep
+
+
+graphRep : Focus (Graph n e) (GraphRep n e)
+graphRep = Focus.create unGraph (\update -> unGraph >> update >> Graph)
+
 
 empty : Graph n e
 empty = Graph IntDict.empty
 
+
 isEmpty : Graph n e -> Bool
-isEmpty graph = 
-    case graph of
-      Graph rep -> IntDict.isEmpty rep
-
-type alias Lens s a = 
-    { get : s -> a
-    , set : s -> a -> s
-    }
-
-composeLens : Lens a b -> Lens b c -> Lens a c
-composeLens outer inner =
-    { get = outer.get >> inner.get
-    , set a = inner.set (outer.get a) >> outer.set a
-    } 
-
-incoming_ : Lens (NodeContext n e) (Adjacency e)
-incoming_ =
-    { get = .incoming
-    , set context map = { context | incoming <- map }
-    }
-          
-outgoing_ : Lens (NodeContext n e) (Adjacency e)
-outgoing_ =
-    { get = .outgoing
-    , set context map = { context | outgoing <- map }
-    }
+isEmpty graph = IntDict.isEmpty (unGraph graph)
 
 
--- This lens would benefit from a combined modify/update representation instead of split getter and setter
-lookup_ : NodeId -> Lens (IntDict v) (Maybe v)
-lookup_ id =
-    { get = IntDict.get id
-    , set dict v = IntDict.update id (always v) dict
-    }                       
-
-incomingEdgeLens : NodeId -> Lens (NodeContext n e) (Maybe e)
-incomingEdgeLens id = incoming_ `composeLens` lookup_ id 
-
-outgoingEdgeLens : NodeId -> Lens (NodeContext n e) (Maybe e)
-outgoingEdgeLens id = outgoing_ `composeLens` lookup_ id
+lookup : NodeId -> Focus (IntDict v) (Maybe v)
+lookup id = Focus.create (IntDict.get id) (\update -> IntDict.update id update)
 
 
-updateAdjajency : Bool -> NodeContext n e -> GraphRep n e -> GraphRep n e
-updateAdjajency shallInsert updateContext rep =                                
-    let updateNeighbor edgeLens edge ctx =
-            edgeLens.set ctx (if shallInsert then Just edge else Nothing)
-        updateNeighbors edgeLens nodeId edge =
-            IntDict.update nodeId (Maybe.map (updateNeighbor edgeLens edge))
+updateAdjacency : Bool -> NodeContext n e -> GraphRep n e -> GraphRep n e
+updateAdjacency shallInsert updateContext rep =                                
+    let updateNeighbors edgeFocus nodeId edge =
+            IntDict.update nodeId (Maybe.map (Focus.set edgeFocus (if shallInsert then Just edge else Nothing)))
         -- This essentially iterates over the keys of updateContext.outgoing to delete the corresponding incoming edges
-        rep1 = IntDict.foldl (updateNeighbors (outgoingEdgeLens updateContext.node.id)) rep updateContext.outgoing
-        rep2 = IntDict.foldl (updateNeighbors (incomingEdgeLens updateContext.node.id)) rep1 updateContext.incoming
+        rep1 = IntDict.foldl (updateNeighbors (outgoing => lookup updateContext.node.id)) rep updateContext.outgoing
+        rep2 = IntDict.foldl (updateNeighbors (incoming => lookup updateContext.node.id)) rep1 updateContext.incoming
     in if shallInsert
        then IntDict.insert updateContext.node.id updateContext rep2
        else IntDict.remove updateContext.node.id rep2
 
-insertNode : NodeContext n e -> GraphRep n e -> GraphRep n e
-insertNode = updateAdjajency True
 
 insert : NodeContext n e -> Graph n e -> Graph n e
 insert nodeContext graph =
     -- We remove the node with the same id from graph, if present
     let graph' = Maybe.withDefault graph (Maybe.map (.rest >> Lazy.force) (focus nodeContext.node.id graph))
-    in case graph' of
-      Graph rep -> Graph (insertNode nodeContext rep)
+    in graph' |> Focus.update graphRep (updateAdjacency True nodeContext)
 
-deleteNode : NodeContext n e -> GraphRep n e -> GraphRep n e
-deleteNode = updateAdjajency False
+
+remove : NodeContext n e -> Graph n e -> Graph n e
+remove nodeContext = Focus.update graphRep (updateAdjacency False nodeContext)
+
 
 focus : NodeId -> Graph n e -> Maybe (Decomposition n e)
 focus node graph =
-    case graph of
-      Graph rep ->
-          let decompose nodeContext =
-                  { focused = nodeContext
-                  , rest = Lazy.lazy (\_ -> Graph (deleteNode nodeContext rep))
-                  }
-          in Maybe.map decompose (IntDict.get node rep)
+    let decompose nodeContext =
+            { focused = nodeContext
+            , rest = Lazy.lazy (\_ -> remove nodeContext graph)
+            }
+    in graph |> Focus.get (nodeById node) |> Maybe.map decompose 
 
+
+nodeById : NodeId -> Focus (Graph n e) (Maybe (NodeContext n e))
+nodeById node =
+    let get = Focus.get (graphRep => lookup node)
+        update upd graph =
+            let old = get graph
+                new = upd old
+            in case (old, new) of
+                 (v, v) -> graph
+                 (Nothing, Just ctx) -> insert ctx graph
+                 (Just ctx, Nothing) -> remove ctx graph
+                 (Just ctx1, Just ctx2) -> graph |> remove ctx1 |> insert ctx2
+    in Focus.create get update 
+          
+--anyNode_ : Focus (Graph n e) (Maybe (NodeContext n e))
+--anyNode_ =
+ --   Focus.create 
 
 focusAny : Graph n e -> Maybe (Decomposition n e)
 focusAny graph =
@@ -228,3 +253,15 @@ mapEdges f =
                   | outgoing <- IntDict.map (\n e -> f e) ctx.outgoing
                   , incoming <- IntDict.map (\n e -> f e) ctx.incoming })
          empty
+
+
+toString' : Graph n e -> String
+toString' graph =
+    let nodeList = nodes graph
+        edgeList = edges graph
+    in
+        "Graph.fromNodesAndEdges " ++ toString nodeList ++ " " ++ toString edgeList
+
+
+g : Graph () String
+g = fromNodesAndEdges [ { id = 1, label = () }, { id = 2, label = () } ] [ { from = 2, to = 1, label = "arrow" } ]

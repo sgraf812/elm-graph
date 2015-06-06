@@ -1,9 +1,9 @@
 module Graph
     ( NodeId, Node, Edge, Adjacency, NodeContext, Decomposition, Graph
     -- Building
-    , empty, update, insert, remove, nodeRange
+    , empty, update, insert, remove 
     -- Query
-    , isEmpty, member, get
+    , isEmpty, member, get, nodeRange
     -- List representations
     , nodeIds, nodes, edges, fromNodesAndEdges
     -- Foci
@@ -15,6 +15,9 @@ module Graph
     , mapContexts
     , mapNodes
     , mapEdges
+
+    , symmetricClosure, reverseEdges 
+    , dfsList, dfs, guidedDfs
 
     , toString'
     , g
@@ -74,33 +77,16 @@ unGraph : Graph n e -> GraphRep n e
 unGraph graph = case graph of Graph rep -> rep
 
 
-graphRep : Focus (Graph n e) (GraphRep n e)
-graphRep = Focus.create unGraph (\update -> unGraph >> update >> Graph)
-
+{- BUILD -}
 
 empty : Graph n e
 empty = Graph IntDict.empty
 
 
-isEmpty : Graph n e -> Bool
-isEmpty graph = IntDict.isEmpty (unGraph graph)
-            
-
-{- BUILDING BLOCKS -}
-
-member : NodeId -> Graph n e -> Bool
-member nodeId =
-   Focus.get graphRep >> IntDict.member nodeId
-
-
-get : NodeId -> Graph n e -> Maybe (NodeContext n e)
-get nodeId =
-   Focus.get (graphRep => lookup nodeId) 
-
-
 type EdgeUpdate e =
     Insert e
     | Remove e
+
 
 type alias EdgeDiff e =
    { incoming : IntDict (EdgeUpdate e)
@@ -181,14 +167,34 @@ insert nodeContext graph =
 remove : NodeId -> Graph n e -> Graph n e
 remove nodeId graph = 
     update nodeId (always Nothing) graph
+            
+
+{- QUERY -}
 
 
+isEmpty : Graph n e -> Bool
+isEmpty graph = IntDict.isEmpty (unGraph graph)
+
+
+member : NodeId -> Graph n e -> Bool
+member nodeId =
+   Focus.get graphRep >> IntDict.member nodeId
+
+
+get : NodeId -> Graph n e -> Maybe (NodeContext n e)
+get nodeId =
+   Focus.get (graphRep => lookup nodeId) 
+
+   
 nodeRange : Graph n e -> Maybe (NodeId, NodeId)
 nodeRange graph =
     let rep = Focus.get graphRep graph
     in  IntDict.findMin rep `Maybe.andThen` \(min, _) ->
         IntDict.findMax rep `Maybe.andThen` \(max, _) ->
         Just (min, max)
+
+
+{- LIST REPRESENTATIONS -}
             
 
 nodes : Graph n e -> List (Node n)
@@ -196,11 +202,13 @@ nodes graph =
     case graph of
       Graph rep -> List.map .node (IntDict.values rep)
 
+      
 nodeIds : Graph n e -> List (NodeId)
 nodeIds graph =
     case graph of
       Graph rep -> IntDict.keys rep
 
+      
 edges : Graph n e -> List (Edge e)
 edges graph =
     let foldl' f dict list = IntDict.foldl f list dict -- so that we can use pointfree notation
@@ -209,7 +217,8 @@ edges graph =
     in case graph of
          Graph rep ->
              foldl' prependEdges rep []
-    
+
+             
 fromNodesAndEdges : List (Node n) -> List (Edge e) -> Graph n e
 fromNodesAndEdges nodes edges = 
     let nodeRep = List.foldl (\n rep -> IntDict.insert n.id { node = n, outgoing = IntDict.empty, incoming = IntDict.empty } rep) IntDict.empty nodes
@@ -255,6 +264,10 @@ outgoing : Focus { record | outgoing : field } field
 outgoing = Focus.create .outgoing (\update record -> { record | outgoing <- update record.outgoing }) 
 
 
+graphRep : Focus (Graph n e) (GraphRep n e)
+graphRep = Focus.create unGraph (\update -> unGraph >> update >> Graph)
+
+
 lookup : NodeId -> Focus (IntDict v) (Maybe v)
 lookup nodeId = Focus.create (IntDict.get nodeId) (IntDict.update nodeId)
 
@@ -276,28 +289,94 @@ anyNode =
 -- TRANSFORMS
 
 
-fold : (NodeContext n e -> acc -> acc) -> acc -> Graph n e -> acc
+fold : (NodeContext n e -> (Lazy acc) -> acc) -> acc -> Graph n e -> acc
 fold f acc graph =
     case Focus.get anyNode graph of
-        Just ctx -> fold f (f ctx acc) (remove ctx.node.id graph)
+        Just ctx -> f ctx <| Lazy.lazy <| \_ -> fold f acc (remove ctx.node.id graph)
         Nothing -> acc
 
 mapContexts : (NodeContext n1 e1 -> NodeContext n2 e2) -> Graph n1 e1 -> Graph n2 e2
-mapContexts f = fold (\ctx -> insert (f ctx)) empty
+mapContexts f = fold (\ctx -> Lazy.force >> insert (f ctx)) empty
 
 
 mapNodes : (n1 -> n2) -> Graph n1 e -> Graph n2 e
-mapNodes f = fold (\ctx -> insert { ctx | node <- { id = ctx.node.id, label = f ctx.node.label } }) empty
+mapNodes f = fold (\ctx -> Lazy.force >> insert { ctx | node <- { id = ctx.node.id, label = f ctx.node.label } }) empty
 
              
 mapEdges : (e1 -> e2) -> Graph n e1 -> Graph n e2
 mapEdges f =
-    fold (\ctx -> insert
+    fold (\ctx -> Lazy.force >> insert
                   { ctx
                   | outgoing <- IntDict.map (\n e -> f e) ctx.outgoing
                   , incoming <- IntDict.map (\n e -> f e) ctx.incoming })
          empty
 
+
+{- GRAPH OPS -}
+
+
+symmetricClosure : (NodeId -> NodeId -> e -> e -> e) -> Graph n e -> Graph n e
+symmetricClosure edgeMerger =
+    -- We could use mapContexts, but this will be more efficient.
+    let orderedEdgeMerger from to outgoing incoming =
+            if from <= to
+            then edgeMerger from to outgoing incoming
+            else edgeMerger to from incoming outgoing
+        updateContext nodeId ctx =
+            let edges = IntDict.uniteWith (orderedEdgeMerger nodeId) ctx.outgoing ctx.incoming
+            in { ctx | outgoing <- edges, incoming <- edges }
+    in Focus.update graphRep (IntDict.map updateContext)
+
+
+reverseEdges : Graph n e -> Graph n e
+reverseEdges =
+    let updateContext nodeId ctx =
+            { ctx | outgoing <- ctx.incoming, incoming <- ctx.outgoing }
+    in Focus.update graphRep (IntDict.map updateContext)
+
+
+{- DFS -}
+
+
+guidedDfs
+    :  (NodeContext n e -> List NodeId)
+    -> (NodeContext n e -> (Lazy acc) -> acc)
+    -> NodeId
+    -> acc
+    -> Graph n e
+    -> acc
+guidedDfs selectNeighbors visitNode seed acc graph =
+    let go stack graph =
+            case stack of
+                [] -> acc
+                next :: stack' ->
+                    case get next graph of
+                        Nothing -> Debug.crash "Graph.guidedDfs: Tried to visit non-existent or already deleted node. This probably means that your selectNeighbors function or your seed is invalid! Otherwise it's a bug worth reporting."
+                        Just ctx ->
+                            visitNode ctx <| Lazy.lazy <| \_ ->
+                                      go (selectNeighbors ctx ++ stack') (remove next graph)
+    in if isEmpty graph
+       then acc
+       else go [seed] graph
+
+
+dfs : (NodeContext n e -> (Lazy acc) -> acc) -> acc -> Graph n e -> acc
+dfs visitNode acc graph =
+    case Focus.get anyNode graph of
+        Just ctx ->
+            let selectNeighbors = Focus.get outgoing >> IntDict.keys
+                seed = ctx.node.id
+            in guidedDfs selectNeighbors visitNode seed acc graph
+        Nothing -> acc
+
+
+dfsList : Graph n e -> List (NodeContext n e)
+dfsList graph =
+    let visitNode ctx lrest =
+            ctx :: Lazy.force lrest
+    in dfs visitNode [] graph
+      
+{- toString -}
 
 toString' : Graph n e -> String
 toString' graph =

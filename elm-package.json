@@ -13,7 +13,7 @@
         "elm-lang/core": "2.0.1 <= v < 3.0.0",
         "evancz/focus": "1.0.1 <= v < 2.0.0",
         "maxsnew/lazy": "1.0.1 <= v < 2.0.0",
-        "sgraf812/elm-intdict": "1.2.1 <= v < 2.0.0"
+        "sgraf812/elm-intdict": "1.3.0 <= v < 2.0.0"
     },
     "elm-version": "0.15.0 <= v < 0.16.0"
 }

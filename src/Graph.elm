@@ -19,7 +19,7 @@ module Graph
     , symmetricClosure, reverseEdges 
     , dfsList, dfs, guidedDfs
     , bfsList, bfs, guidedBfs
-    , heightLevels
+    , heightLevels, topologicalSort
 
     , toString'
     , g, g2
@@ -496,6 +496,11 @@ heightLevels graph =
                         | depth + 1 == minDepth -> ([ctx] :: levels, minDepth - 1)
                         | otherwise -> Debug.crash "Graph.heightLevels: Reached a branch which is impossible by invariants. Please file a bug report!"
     in guidedBfs selectNeighbors visitNode sources ([], 0) graph |> fst
+
+
+topologicalSort : Graph n e -> List (NodeContext n e)
+topologicalSort =
+    heightLevels >> List.concat
 
       
 {- toString -}

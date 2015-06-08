@@ -18,9 +18,11 @@ module Graph
 
     , symmetricClosure, reverseEdges 
     , dfsList, dfs, guidedDfs
+    , bfsList, bfs, guidedBfs
+    , heightLevels
 
     , toString'
-    , g
+    , g, g2
     ) where
     
 
@@ -155,7 +157,9 @@ update nodeId updater =
            let old = IntDict.get nodeId rep
                new = updater old
                diff = computeEdgeDiff old new
-           in applyEdgeDiff nodeId diff rep
+           in rep
+               |> applyEdgeDiff nodeId diff
+               |> IntDict.update nodeId updater
    in Focus.update graphRep updater'
 
 
@@ -289,11 +293,12 @@ anyNode =
 -- TRANSFORMS
 
 
-fold : (NodeContext n e -> (Lazy acc) -> acc) -> acc -> Graph n e -> acc
+fold : (NodeContext n e -> Lazy acc -> acc) -> acc -> Graph n e -> acc
 fold f acc graph =
     case Focus.get anyNode graph of
         Just ctx -> f ctx <| Lazy.lazy <| \_ -> fold f acc (remove ctx.node.id graph)
         Nothing -> acc
+
 
 mapContexts : (NodeContext n1 e1 -> NodeContext n2 e2) -> Graph n1 e1 -> Graph n2 e2
 mapContexts f = fold (\ctx -> Lazy.force >> insert (f ctx)) empty
@@ -339,42 +344,159 @@ reverseEdges =
 
 
 guidedDfs
-    :  (NodeContext n e -> List NodeId)
-    -> (NodeContext n e -> (Lazy acc) -> acc)
-    -> NodeId
+    :  (Graph n e -> NodeContext n e -> info -> List (NodeId, info))
+    -> (NodeContext n e -> info -> Lazy acc -> acc)
+    -> List (NodeId, info)
     -> acc
     -> Graph n e
     -> acc
-guidedDfs selectNeighbors visitNode seed acc graph =
+guidedDfs selectNeighbors visitNode seeds acc graph =
     let go stack graph =
             case stack of
                 [] -> acc
-                next :: stack' ->
+                (next, info) :: stack' ->
                     case get next graph of
                         Nothing -> Debug.crash "Graph.guidedDfs: Tried to visit non-existent or already deleted node. This probably means that your selectNeighbors function or your seed is invalid! Otherwise it's a bug worth reporting."
                         Just ctx ->
-                            visitNode ctx <| Lazy.lazy <| \_ ->
-                                      go (selectNeighbors ctx ++ stack') (remove next graph)
+                            visitNode ctx
+                                      info <| Lazy.lazy <| \_ ->
+                                      go (selectNeighbors graph ctx info ++ stack') (remove next graph)
     in if isEmpty graph
        then acc
-       else go [seed] graph
+       else go seeds graph
 
 
-dfs : (NodeContext n e -> (Lazy acc) -> acc) -> acc -> Graph n e -> acc
-dfs visitNode acc graph =
+type alias GuidedDfsOrBfs n e info acc =
+    (Graph n e -> NodeContext n e -> info -> List (NodeId, info))
+    -> (NodeContext n e -> info -> Lazy acc -> acc)
+    -> List (NodeId, info)
+    -> acc
+    -> Graph n e
+    -> acc
+
+
+startWithAnyNodeAndVisitOutgoingNeighbors
+    :  GuidedDfsOrBfs n e () acc
+    -> (NodeContext n e -> Lazy acc -> acc)
+    -> acc
+    -> Graph n e
+    -> acc
+startWithAnyNodeAndVisitOutgoingNeighbors guidedDfsOrBfs visitNode acc graph =
     case Focus.get anyNode graph of
         Just ctx ->
-            let selectNeighbors = Focus.get outgoing >> IntDict.keys
-                seed = ctx.node.id
-            in guidedDfs selectNeighbors visitNode seed acc graph
+            let selectNeighbors _ ctx _ = ctx |> Focus.get outgoing |> IntDict.keys |> List.map (\id -> (id, ()))
+                visitNode' ctx _ acc = visitNode ctx acc
+                seed = (ctx.node.id, ())
+            in guidedDfsOrBfs selectNeighbors visitNode' [seed] acc graph
         Nothing -> acc
 
 
+dfs : (NodeContext n e -> Lazy acc -> acc) -> acc -> Graph n e -> acc
+dfs = startWithAnyNodeAndVisitOutgoingNeighbors guidedDfs
+
+
+accumulateNodesInList : NodeContext n e -> Lazy (List (NodeContext n e)) -> List (NodeContext n e)
+accumulateNodesInList ctx rest =
+    ctx :: Lazy.force rest
+
+    
 dfsList : Graph n e -> List (NodeContext n e)
 dfsList graph =
-    let visitNode ctx lrest =
-            ctx :: Lazy.force lrest
-    in dfs visitNode [] graph
+    dfs accumulateNodesInList [] graph
+
+
+{- BFS -}
+
+
+type alias Queue a =
+    { front : List a
+    , back : List a
+    }
+
+
+enqueue : List a -> Queue a -> Queue a
+enqueue vals queue =
+    { queue
+    | back <- vals ++ queue.back
+    }
+
+
+popFront : Queue a -> Maybe (a, Queue a)
+popFront queue =
+    case queue.front of
+        val :: front' -> Just (val, { queue | front <- front' })
+        [] ->
+            case List.reverse queue.back of
+                [] -> Nothing
+                val :: front' -> Just (val, { front = front', back = [] })
+    
+
+guidedBfs
+    :  (Graph n e -> NodeContext n e -> info -> List (NodeId, info))
+    -> (NodeContext n e -> info -> Lazy acc -> acc)
+    -> List (NodeId, info)
+    -> acc
+    -> Graph n e
+    -> acc
+guidedBfs selectNeighbors visitNode seeds acc graph =
+    let go queue graph =
+            case popFront queue of
+                Nothing -> acc
+                Just ((next, info), queue') ->
+                    case get next graph of
+                        -- This can actually happen since we don't filter the queue for already visited nodes.
+                        Nothing -> go queue' (remove next graph) 
+                        Just ctx ->
+                            visitNode ctx
+                                      info <| Lazy.lazy <| \_ ->
+                                      go (enqueue (selectNeighbors graph ctx info) queue') (remove next graph)
+    -- There is significant overlap with guidedDfs, differing just in the container type used.
+    in if isEmpty graph
+       then acc
+       else go { front = seeds, back = [] } graph
+            
+
+bfs : (NodeContext n e -> (Lazy acc) -> acc) -> acc -> Graph n e -> acc
+bfs = startWithAnyNodeAndVisitOutgoingNeighbors guidedBfs
+
+
+bfsList : Graph n e -> List (NodeContext n e)
+bfsList graph =
+    bfs accumulateNodesInList [] graph
+
+    
+heightLevels : Graph n e -> List (List (NodeContext n e))
+heightLevels graph =
+    let isSource nodeId =
+            graph
+             |> get nodeId
+             |> Maybe.map (.incoming >> IntDict.isEmpty)
+             |> Maybe.withDefault False 
+        sources =
+            graph
+             |> nodeIds
+             |> List.filter isSource
+             |> List.map (\id -> (id, 0))
+        hasOnlyOneIncomingEdge graph' nodeId =
+            graph'
+             |> get nodeId
+             |> Maybe.map (.incoming >> IntDict.size >> (==) 1)
+             |> Maybe.withDefault False
+        selectNeighbors graph' ctx height =
+            ctx.outgoing
+             |> IntDict.keys
+             |> List.filter (hasOnlyOneIncomingEdge graph')
+             |> List.map (\id -> (id, height + 1))
+        visitNode ctx depth rest =
+            let (levels, minDepth) = Lazy.force rest
+            in case levels of
+                [] -> ([[ctx]], depth)
+                level :: lowerLevels ->
+                    if  | depth == minDepth -> ((ctx :: level) :: lowerLevels, minDepth)
+                        | depth + 1 == minDepth -> ([ctx] :: levels, minDepth - 1)
+                        | otherwise -> Debug.crash "Graph.heightLevels: Reached a branch which is impossible by invariants. Please file a bug report!"
+    in guidedBfs selectNeighbors visitNode sources ([], 0) graph |> fst
+
       
 {- toString -}
 
@@ -388,3 +510,36 @@ toString' graph =
 
 g : Graph () String
 g = fromNodesAndEdges [ { id = 1, label = () }, { id = 2, label = () } ] [ { from = 2, to = 1, label = "arrow" } ]
+
+
+type alias State s a = s -> (a, s)
+
+n : n -> State NodeId (Node n)
+n lbl id =
+    ({ id = id, label = lbl }, id + 1)
+
+(>>=) : State s a -> (a -> State s b) -> State s b
+state >>= f = \id ->
+    let (n, id') = state id
+    in f n id'
+
+pure : a -> State s a
+pure val id = (val, id)
+
+sequence : List (State s a) -> State s (List a)
+sequence states =
+    case states of
+        [] -> pure []
+        s :: states' ->
+            s >>= \val -> sequence states' >>= \rest -> pure (val :: rest)
+    
+            --\id -> let (x, id') = s id
+             --          (rest, id'') = sequence states' id'
+              --     in x :: rest
+e from to = { from = from, to = to, label = () }
+         
+g2 : Graph String ()
+g2 =
+    fromNodesAndEdges
+        (sequence [n "Shorts", n "Socks", n "Pants", n "Undershirt", n "Sweater", n "Coat", n "Shoes" ] 0 |> fst)
+        [e 0 2, e 1 6, e 2 5, e 2 6, e 3 4, e 4 5]

@@ -3,12 +3,10 @@ module Test where
 import String
 import IntDict exposing (IntDict)
 import Graph exposing (Graph, Node, Edge, NodeContext)
+import Focus exposing (Focus)
 
 import ElmTest.Assertion exposing (..)
 import ElmTest.Test exposing (..)
-import Stateful exposing (Stateful)
-
-
 
          
 dressUp : Graph String ()
@@ -23,8 +21,10 @@ dressUp =
       , Node 5 "Coat"
       , Node 6 "Shoes"
       ]
+
     e from to = 
       Edge from to ()
+
     edges =
       [ e 0 2 -- shorts before pants
       , e 1 6 -- socks before shoes
@@ -33,6 +33,7 @@ dressUp =
       , e 3 4 -- underhirt before sweater
       , e 4 5 -- sweater before coat
       ]
+
   in
     Graph.fromNodesAndEdges nodes edges
 
@@ -51,7 +52,38 @@ tests =
         , test "isEmpty" <| assertEqual True (Graph.isEmpty Graph.empty)
         ]
 
-    insertTests=
+    memberTests =
+      suite "member"
+        [ test "True" <| assertEqual True (Graph.member 0 dressUp)
+        , test "True" <| assertEqual False (Graph.member 99 dressUp)
+        ]
+
+    getTests =
+      suite "get"
+        [ test "id 0, the shorts" <|
+            assertEqual
+              (Just "Shorts")
+              (dressUp |> Graph.get 0 |> Maybe.map (.node >> .label))
+        , test "id 99, Nothing" <| assertEqual Nothing (Graph.get 99 dressUp)
+        ]
+
+    nodeRangeTests =
+      suite "nodeRange"
+        [ test "dressUp: [0, 6]" <|
+            assertEqual
+              (Just (0, 6))
+              (Graph.nodeRange dressUp)
+        , test "dressUp - 1: [1, 6]" <|
+            assertEqual
+              (Just (1, 6)) 
+              (dressUp |> Graph.remove 0 |> Graph.nodeRange)
+        , test "dressUp - 6: [0, 5]" <|
+            assertEqual
+              (Just (0, 5))
+              (dressUp |> Graph.remove 6 |> Graph.nodeRange)
+        ]
+
+    insertTests =
       suite "insert"
         [ test "new node - size" <|
             assertEqual
@@ -84,6 +116,34 @@ tests =
                  |> Maybe.map (\ctx -> IntDict.isEmpty ctx.incoming && IntDict.isEmpty ctx.outgoing))
         ]
 
+    removeTests =
+      suite "remove"
+        [ test "nonexistent node" <|
+            assertEqual
+              dressUp
+              (dressUp |> Graph.remove 99) 
+        , test "existing node - size" <|
+            assertEqual
+              (dressUp |> Graph.size |> flip (-) 1)
+              (dressUp |> Graph.remove 0 |> Graph.size)
+        , test "existing node - can't get it" <|
+            assertEqual
+              Nothing
+              (dressUp |> Graph.remove 0 |> Graph.get 0)
+        ]
+
+    updateTests =
+      suite "update"
+        [ test "remove outgoing edges" <|
+            assertEqual
+              (Just True)
+              (dressUp
+                 |> Graph.update 0 -- "Shorts" has outgoing edges
+                      (Maybe.map (Focus.set Graph.outgoing IntDict.empty))
+                 |> Graph.get 0
+                 |> Maybe.map (.outgoing >> IntDict.isEmpty))
+        ]
+          
     topologicalSortTests =
       suite "topologicalSort"  
         [ test "works on dressUp" <|
@@ -104,7 +164,12 @@ tests =
     unitTests =
       suite "unit tests"
         [ emptyTests
+        , memberTests
+        , getTests
+        , nodeRangeTests
         , insertTests
+        , removeTests
+        , updateTests
         ]
 
     examples =

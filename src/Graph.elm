@@ -3,7 +3,7 @@ module Graph
     -- Building
     , empty, update, insert, remove 
     -- Query
-    , isEmpty, member, get, nodeRange
+    , isEmpty, size, member, get, nodeRange
     -- List representations
     , nodeIds, nodes, edges, fromNodesAndEdges
     -- Foci
@@ -16,13 +16,13 @@ module Graph
     , mapNodes
     , mapEdges
 
+    , isSimple
     , symmetricClosure, reverseEdges 
     , dfsList, dfs, guidedDfs
     , bfsList, bfs, guidedBfs
     , heightLevels, topologicalSort
 
     , toString'
-    , g, g2
     ) where
     
 
@@ -30,6 +30,7 @@ import IntDict as IntDict exposing (IntDict)
 import Maybe as Maybe exposing (Maybe)
 import Lazy as Lazy exposing (Lazy)
 import Focus as Focus exposing (Focus, (=>))
+import Queue as Queue exposing (Queue)
 import Debug
     
 type alias NodeId = Int
@@ -180,6 +181,11 @@ isEmpty : Graph n e -> Bool
 isEmpty graph = IntDict.isEmpty (unGraph graph)
 
 
+size : Graph n e -> Int
+size =
+   Focus.get graphRep >> IntDict.size
+                
+
 member : NodeId -> Graph n e -> Bool
 member nodeId =
    Focus.get graphRep >> IntDict.member nodeId
@@ -290,7 +296,7 @@ anyNode =
     in Focus.create get update
 
 
--- TRANSFORMS
+{- TRANSFORMS -}
 
 
 fold : (NodeContext n e -> Lazy acc -> acc) -> acc -> Graph n e -> acc
@@ -315,6 +321,18 @@ mapEdges f =
                   | outgoing <- IntDict.map (\n e -> f e) ctx.outgoing
                   , incoming <- IntDict.map (\n e -> f e) ctx.incoming })
          empty
+
+
+{- CHARACTERIZATION -}
+
+
+isSimple : Graph n e -> Bool
+isSimple graph =
+    let checkForLoop ctx rest =
+            IntDict.member ctx.node.id ctx.incoming || Lazy.force rest
+    in graph
+        |> fold checkForLoop False
+        |> not
 
 
 {- GRAPH OPS -}
@@ -344,9 +362,9 @@ reverseEdges =
 
 
 guidedDfs
-    :  (Graph n e -> NodeContext n e -> info -> List (NodeId, info))
-    -> (NodeContext n e -> info -> Lazy acc -> acc)
-    -> List (NodeId, info)
+    :  (Graph n e -> NodeContext n e -> tag -> List (NodeId, tag))
+    -> (NodeContext n e -> tag -> Lazy acc -> acc)
+    -> List (NodeId, tag)
     -> acc
     -> Graph n e
     -> acc
@@ -354,22 +372,22 @@ guidedDfs selectNeighbors visitNode seeds acc graph =
     let go stack graph =
             case stack of
                 [] -> acc
-                (next, info) :: stack' ->
+                (next, tag) :: stack' ->
                     case get next graph of
                         Nothing -> Debug.crash "Graph.guidedDfs: Tried to visit non-existent or already deleted node. This probably means that your selectNeighbors function or your seed is invalid! Otherwise it's a bug worth reporting."
                         Just ctx ->
                             visitNode ctx
-                                      info <| Lazy.lazy <| \_ ->
-                                      go (selectNeighbors graph ctx info ++ stack') (remove next graph)
+                                      tag <| Lazy.lazy <| \_ ->
+                                      go (selectNeighbors graph ctx tag ++ stack') (remove next graph)
     in if isEmpty graph
        then acc
        else go seeds graph
 
 
-type alias GuidedDfsOrBfs n e info acc =
-    (Graph n e -> NodeContext n e -> info -> List (NodeId, info))
-    -> (NodeContext n e -> info -> Lazy acc -> acc)
-    -> List (NodeId, info)
+type alias GuidedDfsOrBfs n e tag acc =
+    (Graph n e -> NodeContext n e -> tag -> List (NodeId, tag))
+    -> (NodeContext n e -> tag -> Lazy acc -> acc)
+    -> List (NodeId, tag)
     -> acc
     -> Graph n e
     -> acc
@@ -393,7 +411,7 @@ startWithAnyNodeAndVisitOutgoingNeighbors guidedDfsOrBfs visitNode acc graph =
 
 dfs : (NodeContext n e -> Lazy acc -> acc) -> acc -> Graph n e -> acc
 dfs = startWithAnyNodeAndVisitOutgoingNeighbors guidedDfs
-
+     
 
 accumulateNodesInList : NodeContext n e -> Lazy (List (NodeContext n e)) -> List (NodeContext n e)
 accumulateNodesInList ctx rest =
@@ -408,52 +426,34 @@ dfsList graph =
 {- BFS -}
 
 
-type alias Queue a =
-    { front : List a
-    , back : List a
-    }
+pushMany : List a -> Queue a -> Queue a
+pushMany elements queue =
+    List.foldl Queue.push queue elements
 
-
-enqueue : List a -> Queue a -> Queue a
-enqueue vals queue =
-    { queue
-    | back <- vals ++ queue.back
-    }
-
-
-popFront : Queue a -> Maybe (a, Queue a)
-popFront queue =
-    case queue.front of
-        val :: front' -> Just (val, { queue | front <- front' })
-        [] ->
-            case List.reverse queue.back of
-                [] -> Nothing
-                val :: front' -> Just (val, { front = front', back = [] })
-    
 
 guidedBfs
-    :  (Graph n e -> NodeContext n e -> info -> List (NodeId, info))
-    -> (NodeContext n e -> info -> Lazy acc -> acc)
-    -> List (NodeId, info)
+    :  (Graph n e -> NodeContext n e -> tag -> List (NodeId, tag))
+    -> (NodeContext n e -> tag -> Lazy acc -> acc)
+    -> List (NodeId, tag)
     -> acc
     -> Graph n e
     -> acc
 guidedBfs selectNeighbors visitNode seeds acc graph =
     let go queue graph =
-            case popFront queue of
+            case Queue.pop queue of
                 Nothing -> acc
-                Just ((next, info), queue') ->
+                Just ((next, tag), queue') ->
                     case get next graph of
                         -- This can actually happen since we don't filter the queue for already visited nodes.
                         Nothing -> go queue' (remove next graph) 
                         Just ctx ->
                             visitNode ctx
-                                      info <| Lazy.lazy <| \_ ->
-                                      go (enqueue (selectNeighbors graph ctx info) queue') (remove next graph)
+                                      tag <| Lazy.lazy <| \_ ->
+                                      go (pushMany (selectNeighbors graph ctx tag) queue') (remove next graph)
     -- There is significant overlap with guidedDfs, differing just in the container type used.
     in if isEmpty graph
-       then acc
-       else go { front = seeds, back = [] } graph
+       then acc 
+       else go (pushMany seeds Queue.empty) graph
             
 
 bfs : (NodeContext n e -> (Lazy acc) -> acc) -> acc -> Graph n e -> acc
@@ -482,11 +482,11 @@ heightLevels graph =
              |> get nodeId
              |> Maybe.map (.incoming >> IntDict.size >> (==) 1)
              |> Maybe.withDefault False
-        selectNeighbors graph' ctx height =
+        selectNeighbors graph' ctx depth =
             ctx.outgoing
              |> IntDict.keys
              |> List.filter (hasOnlyOneIncomingEdge graph')
-             |> List.map (\id -> (id, height + 1))
+             |> List.map (\id -> (id, depth + 1))
         visitNode ctx depth rest =
             let (levels, minDepth) = Lazy.force rest
             in case levels of
@@ -511,40 +511,3 @@ toString' graph =
         edgeList = edges graph
     in
         "Graph.fromNodesAndEdges " ++ toString nodeList ++ " " ++ toString edgeList
-
-
-g : Graph () String
-g = fromNodesAndEdges [ { id = 1, label = () }, { id = 2, label = () } ] [ { from = 2, to = 1, label = "arrow" } ]
-
-
-type alias State s a = s -> (a, s)
-
-n : n -> State NodeId (Node n)
-n lbl id =
-    ({ id = id, label = lbl }, id + 1)
-
-(>>=) : State s a -> (a -> State s b) -> State s b
-state >>= f = \id ->
-    let (n, id') = state id
-    in f n id'
-
-pure : a -> State s a
-pure val id = (val, id)
-
-sequence : List (State s a) -> State s (List a)
-sequence states =
-    case states of
-        [] -> pure []
-        s :: states' ->
-            s >>= \val -> sequence states' >>= \rest -> pure (val :: rest)
-    
-            --\id -> let (x, id') = s id
-             --          (rest, id'') = sequence states' id'
-              --     in x :: rest
-e from to = { from = from, to = to, label = () }
-         
-g2 : Graph String ()
-g2 =
-    fromNodesAndEdges
-        (sequence [n "Shorts", n "Socks", n "Pants", n "Undershirt", n "Sweater", n "Coat", n "Shoes" ] 0 |> fst)
-        [e 0 2, e 1 6, e 2 5, e 2 6, e 3 4, e 4 5]

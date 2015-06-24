@@ -8,6 +8,13 @@ import Focus exposing (Focus)
 import ElmTest.Assertion exposing (..)
 import ElmTest.Test exposing (..)
 
+
+isJust : Maybe a -> Bool
+isJust m =
+  case m of
+    Just _ -> True
+    _ -> False
+
          
 dressUp : Graph String ()
 dressUp =
@@ -83,6 +90,42 @@ tests =
               (dressUp |> Graph.remove 6 |> Graph.nodeRange)
         ]
 
+    listRepTests =
+      suite "list conversions"
+        [ test "nodeIds" <|
+            assertEqual 
+              [0, 1, 2, 3, 4, 5, 6]
+              (dressUp |> Graph.nodeIds)
+        , test "nodes" <|
+            assertEqual
+              [0, 1, 2, 3, 4, 5, 6]
+              (dressUp |> Graph.nodes |> List.map .id)
+        , test "edges" <|
+            assertEqual
+              [(0, 2), (1, 6), (2, 5), (2, 6), (3, 4), (4, 5)]
+              (dressUp
+                 |> Graph.edges
+                 |> List.map (\e -> (e.from, e.to))
+                 |> List.sort)
+        ]
+
+    focusTests =
+      suite "foci"
+        [ test "get anyNode - empty" <|
+            assertEqual
+              Nothing
+              (Focus.get Graph.anyNode Graph.empty)
+        , test "get anyNode - not empty" <|
+            assert
+              (dressUp |> Focus.get Graph.anyNode |> isJust)
+        , test "set anyNode - empty" <|
+            assertEqual
+              Nothing
+              (Graph.empty
+                 |> Focus.set Graph.anyNode (Just (noNeighbors (Node 9 "lkj")))
+                 |> Graph.get 9)
+        ]
+
     insertTests =
       suite "insert"
         [ test "new node - size" <|
@@ -132,6 +175,7 @@ tests =
               (dressUp |> Graph.remove 0 |> Graph.get 0)
         ]
 
+
     updateTests =
       suite "update"
         [ test "remove outgoing edges" <|
@@ -167,6 +211,8 @@ tests =
         , memberTests
         , getTests
         , nodeRangeTests
+        , listRepTests
+        , focusTests
         , insertTests
         , removeTests
         , updateTests

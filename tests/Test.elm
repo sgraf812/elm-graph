@@ -1,9 +1,11 @@
 module Test where
 
 import String
+import Debug
 import IntDict exposing (IntDict)
 import Graph exposing (Graph, Node, Edge, NodeContext)
 import Focus exposing (Focus)
+import Lazy exposing (Lazy)
 
 import ElmTest.Assertion exposing (..)
 import ElmTest.Test exposing (..)
@@ -175,7 +177,6 @@ tests =
               (dressUp |> Graph.remove 0 |> Graph.get 0)
         ]
 
-
     updateTests =
       suite "update"
         [ test "remove outgoing edges" <|
@@ -186,6 +187,60 @@ tests =
                       (Maybe.map (Focus.set Graph.outgoing IntDict.empty))
                  |> Graph.get 0
                  |> Maybe.map (.outgoing >> IntDict.isEmpty))
+        ]
+
+    foldTests =
+      suite "fold"
+        [ test "sum up ids" <|
+            assertEqual
+              21
+              (dressUp
+                 |> Graph.fold (\ctx -> Lazy.force >> (+) ctx.node.id) 0)
+                            
+        ]
+
+    mapTests =
+      suite "map*"
+        [ test "mapContexts over id is the id" <|
+            assertEqual
+              dressUp
+              (dressUp |> Graph.mapContexts identity)
+        , test "mapNodes over id is the id" <|
+            assertEqual
+              dressUp
+              (dressUp |> Graph.mapNodes identity)
+        , test "mapEdges over id is the id" <|
+            assertEqual
+              dressUp
+              (dressUp |> Graph.mapNodes identity)
+        -- This should be backed by more tests, but I'm not in the mood for that :/
+        ]
+
+    characterizationTests =
+      suite "characterization"
+        [ test "dressUp is simple" <|
+            assert (Graph.isSimple dressUp)
+        ]
+
+    graphOpsTests =
+      suite "Graph ops"
+        [ test "symmetricClosure is symmetric" <|
+            assert
+              (dressUp
+                 |> Graph.symmetricClosure (\_ _ e _ -> e)
+                 |> Graph.fold (\ctx acc ->
+                      ctx.incoming == ctx.outgoing && Lazy.force acc) True)
+        , test "reverseEdges" <|
+            assertEqual
+              (dressUp
+                 |> Graph.edges
+                 |> List.map (\e -> (e.from, e.to))
+                 |> List.sort)
+              (dressUp
+                 |> Graph.reverseEdges
+                 |> Graph.edges
+                 |> List.map (\e -> (e.to, e.from))
+                 |> List.sort)
         ]
           
     topologicalSortTests =
@@ -216,6 +271,11 @@ tests =
         , insertTests
         , removeTests
         , updateTests
+        , foldTests
+        , mapTests
+        , characterizationTests
+        , graphOpsTests
+        , topologicalSortTests
         ]
 
     examples =

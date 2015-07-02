@@ -246,18 +246,17 @@ tests =
     topologicalSortTests =
       suite "topologicalSort"  
         [ test "works on dressUp" <|
-            case 
-              List.foldl
-                (\ctx maybeIds ->
-                  maybeIds `Maybe.andThen` \ids ->
-                  if List.all (flip IntDict.member ids) (IntDict.keys ctx.incoming)
-                  then ids |> IntDict.insert ctx.node.id () |> Just
-                  else Nothing)
-                (Just IntDict.empty)
-                (Graph.topologicalSort dressUp)
-            of
-              Just _ -> assert True
-              Nothing -> assert False
+            assert
+              (dressUp
+                 |> Graph.topologicalSort
+                 |> List.foldl
+                      (\ctx maybeIds ->
+                        maybeIds `Maybe.andThen` \ids ->
+                        if List.all (flip IntDict.member ids) (IntDict.keys ctx.incoming)
+                        then ids |> IntDict.insert ctx.node.id () |> Just
+                        else Nothing)
+                      (Just IntDict.empty)
+                 |> isJust)
         ]
       
     unitTests =

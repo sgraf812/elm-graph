@@ -358,125 +358,194 @@ reverseEdges =
     in Focus.update graphRep (IntDict.map updateContext)
 
 
-{- DFS -}
+{- Traversals -}
 
 
-guidedDfs
-    :  (Graph n e -> NodeContext n e -> tag -> List (NodeId, tag))
-    -> (NodeContext n e -> tag -> Lazy acc -> acc)
-    -> List (NodeId, tag)
-    -> acc
-    -> Graph n e
-    -> acc
-guidedDfs selectNeighbors visitNode seeds acc graph =
-    let go stack graph =
-            case stack of
-                [] -> acc
-                (next, tag) :: stack' ->
-                    case get next graph of
-                        Nothing -> Debug.crash "Graph.guidedDfs: Tried to visit non-existent or already deleted node. This probably means that your selectNeighbors function or your seed is invalid! Otherwise it's a bug worth reporting."
-                        Just ctx ->
-                            visitNode ctx
-                                      tag <| Lazy.lazy <| \_ ->
-                                      go (selectNeighbors graph ctx tag ++ stack') (remove next graph)
-    in if isEmpty graph
-       then acc
-       else go seeds graph
+type alias NeighborSelector n e =
+    Graph n e
+    -> NodeContext n e
+    -> List (NodeId, nodeTag)
 
 
-type alias GuidedDfsOrBfs n e tag acc =
-    (Graph n e -> NodeContext n e -> tag -> List (NodeId, tag))
-    -> (NodeContext n e -> tag -> Lazy acc -> acc)
-    -> List (NodeId, tag)
-    -> acc
-    -> Graph n e
+type alias ComponentSelector n e acc =
+    Graph n e
+    -> Maybe (NodeId, (acc -> acc))
+
+
+type alias NodeVisitor n e acc =
+    NodeContext n e
+    -> Lazy acc
     -> acc
 
 
-startWithAnyNodeAndVisitOutgoingNeighbors
-    :  GuidedDfsOrBfs n e () acc
-    -> (NodeContext n e -> Lazy acc -> acc)
+type alias NodeVisitorWithDepth n e acc =
+    NodeContext n e
+    -> Int
+    -> Lazy acc
     -> acc
-    -> Graph n e
-    -> acc
-startWithAnyNodeAndVisitOutgoingNeighbors guidedDfsOrBfs visitNode acc graph =
-    case Focus.get anyNode graph of
-        Just ctx ->
-            let selectNeighbors _ ctx _ = ctx |> Focus.get outgoing |> IntDict.keys |> List.map (\id -> (id, ()))
-                visitNode' ctx _ acc = visitNode ctx acc
-                seed = (ctx.node.id, ())
-            in guidedDfsOrBfs selectNeighbors visitNode' [seed] acc graph
-        Nothing -> acc
 
 
-dfs : (NodeContext n e -> Lazy acc -> acc) -> acc -> Graph n e -> acc
-dfs = startWithAnyNodeAndVisitOutgoingNeighbors guidedDfs
-     
+alongOutgoingEdges : NeighborSelector n e
+alongOutgoingEdges graph ctx =
+    ctx.outgoing
+        |> IntDict.keys
 
-accumulateNodesInList : NodeContext n e -> Lazy (List (NodeContext n e)) -> List (NodeContext n e)
+
+traverseAllComponents : ComponentSelector n e acc
+traverseAllComponents graph =
+    graph
+        |> Focus.get anyNode
+        |> Maybe.map (\root -> (root.node.id, identity))
+
+
+traverseComponentOf : NodeId -> ComponentSelector n e acc
+traverseComponentOf nodeId graph =
+    graph
+      |> Focus.get (nodeById nodeId)
+      |> Maybe.map (\root -> (root.node.id, identity))
+
+
+traverseAnyOneComponent : Graph n e -> ComponentSelector n e acc
+traverseAnyOneComponent originalGraph currentGraph =
+    if originalGraph /= currentGraph
+    then Nothing
+    else originalGraph
+        |> Focus.get anyNode
+        |> Maybe.map (\root -> (root.node.id, identity))
+
+
+accumulateNodesInList : NodeVisitor n e (List (NodeContext n e))
 accumulateNodesInList ctx rest =
     ctx :: Lazy.force rest
 
-    
-dfsList : Graph n e -> List (NodeContext n e)
-dfsList graph =
-    dfs accumulateNodesInList [] graph
+
+ignoreDepth : NodeVisitor n e -> NodeVisitorWithDepth n e
+ignoreDepth visitNode ctx depth acc =
+    visitNode ctx acc
 
 
-{- BFS -}
+-- Not Exported.
+-- Abstracting over Stack and Queue without HKTs. We monomorphise NodeId and abstract over the container. 
+-- XIFO is a wildcard match for FIFO (Queue) and LIFO (Stack)
+type alias NodeIdXIFOImpl a =
+    { empty : a
+    , push : (NodeId, Int) -> a -> a
+    , pop : a -> Maybe ((NodeId, Int), a)
+    }
 
 
-pushMany : List a -> Queue a -> Queue a
-pushMany elements queue =
-    List.foldl Queue.push queue elements
+stackImpl : NodeIdXIFOImpl (List (NodeId, Int))
+stackImpl =
+    { empty = []
+    , push = (::)
+    , pop xs =
+        case xs of
+            [] -> Nothing
+            x :: xs' -> (x, xs')
+    }
 
 
-guidedBfs
-    :  (Graph n e -> NodeContext n e -> tag -> List (NodeId, tag))
-    -> (NodeContext n e -> tag -> Lazy acc -> acc)
-    -> List (NodeId, tag)
+queueImpl : NodeIdXIFOImpl (Queue (NodeId, Int))
+queueImpl =
+    { empty = Queue.empty
+    , push = Queue.push
+    , pop = Queue.pop
+    }
+
+
+guidedTraversal
+    :  NodeIdXIFOImpl a
+    -> NeighborSelector n e
+    -> ComponentSelector n e acc
+    -> NodeVisitorWithDepth n e acc
     -> acc
     -> Graph n e
     -> acc
-guidedBfs selectNeighbors visitNode seeds acc graph =
-    let go queue graph =
-            case Queue.pop queue of
-                Nothing -> acc
-                Just ((next, tag), queue') ->
+guidedTraversal xifoImpl selectNeighbors nextComponent visitNode acc graph =
+    -- It may be worthwhile to convert this all to CPS, but who knows
+    let pushMany nodeIds xifo =
+            List.foldl xifoImpl.push xifo nodeIds
+        component graph =
+            case nextComponent graph of
+                Nothing -> -- No more roots => the traversal terminates
+                    acc
+                Just (root, finish) ->
+                    graph
+                      |> traverse (xifoImpl.empty |> xifoImpl.push root)
+                      |> finish
+        traverse xifo graph = -- This will visit the rest of the graph only as long as visitNode forces it
+            case xifoImpl.pop xifo of
+                Nothing -> -- We are done with this connected component
+                    component graph
+                Just ((next, depth), xifo') ->
                     case get next graph of
-                        -- This can actually happen since we don't filter the queue for already visited nodes.
-                        Nothing -> go queue' (remove next graph) 
+                        -- This can actually happen since we don't filter the xifo for already visited nodes.
+                        Nothing -> traverse xifo' (remove next graph)
                         Just ctx ->
-                            visitNode ctx
-                                      tag <| Lazy.lazy <| \_ ->
-                                      go (pushMany (selectNeighbors graph ctx tag) queue') (remove next graph)
-    -- There is significant overlap with guidedDfs, differing just in the container type used.
-    in if isEmpty graph
-       then acc 
-       else go (pushMany seeds Queue.empty) graph
-            
+                            visitNode ctx depth <| Lazy.lazy <| \_ ->
+                                let neighbors =
+                                      ctx
+                                        |> selectNeighbors graph
+                                        |> List.map (\nodeId -> (nodeId, depth + 1))
+                                in traverse (pushMany neighbors xifo') (remove next graph)
+    in component graph
 
-bfs : (NodeContext n e -> (Lazy acc) -> acc) -> acc -> Graph n e -> acc
-bfs = startWithAnyNodeAndVisitOutgoingNeighbors guidedBfs
+
+guidedDfs
+    :  NeighborSelector n e
+    -> ComponentSelector n e acc
+    -> NodeVisitorWithDepth n e acc
+    -> acc
+    -> Graph n e
+    -> acc
+guidedDfs =
+    guidedTraversal stackImpl
+
+
+guidedBfs
+    :  NeighborSelector n e
+    -> ComponentSelector n e acc
+    -> NodeVisitorWithDepth n e acc
+    -> acc
+    -> Graph n e
+    -> acc
+guidedBfs =
+    guidedTraversal queueImpl
+
+
+dfs : NodeVisitor n e acc -> acc -> Graph n e -> acc
+dfs visitNode acc graph =
+    guidedDfs alongOutgoingEdges (traverseAnyOneComponent graph) (ignoreDepth visitNode) acc graph
+
+
+bfs : NodeVisitor n e acc -> acc -> Graph n e -> acc
+bfs visitNode acc graph = 
+    guidedBfs alongOutgoingEdges (traverseAnyOneComponent graph) (ignoreDepth visitNode) acc graph
+
+
+dfsList : Graph n e -> List (NodeContext n e)
+dfsList =
+    dfs accumulateNodesInList []
 
 
 bfsList : Graph n e -> List (NodeContext n e)
 bfsList graph =
     bfs accumulateNodesInList [] graph
 
-    
+
 heightLevels : Graph n e -> List (List (NodeContext n e))
 heightLevels graph =
-    let isSource nodeId =
-            graph
+    let isSource graph' nodeId =
+            graph'
              |> get nodeId
              |> Maybe.map (.incoming >> IntDict.isEmpty)
              |> Maybe.withDefault False 
-        sources =
-            graph
+        startFromSources graph' =
+            graph'
              |> nodeIds
-             |> List.filter isSource
-             |> List.map (\id -> (id, 0))
+             |> List.filter (isSource graph')
+             |> List.head
+             |> Maybe.map (\sourceId -> (sourceId, identity))
         hasOnlyOneIncomingEdge graph' nodeId =
             graph'
              |> get nodeId
@@ -495,14 +564,14 @@ heightLevels graph =
                     if  | depth == minDepth -> ((ctx :: level) :: lowerLevels, minDepth)
                         | depth + 1 == minDepth -> ([ctx] :: levels, minDepth - 1)
                         | otherwise -> Debug.crash "Graph.heightLevels: Reached a branch which is impossible by invariants. Please file a bug report!"
-    in guidedBfs selectNeighbors visitNode sources ([], 0) graph |> fst
+    in guidedBfs selectNeighbors startFromSources visitNode [] graph
 
 
 topologicalSort : Graph n e -> List (NodeContext n e)
 topologicalSort =
     heightLevels >> List.concat
 
-      
+
 {- toString -}
 
 toString' : Graph n e -> String

@@ -362,14 +362,8 @@ reverseEdges =
 
 
 type alias NeighborSelector n e =
-    Graph n e
-    -> NodeContext n e
-    -> List (NodeId, nodeTag)
-
-
-type alias ComponentSelector n e acc =
-    Graph n e
-    -> Maybe (NodeId, (acc -> acc))
+    NodeContext n e
+    -> List NodeId
 
 
 type alias NodeVisitor n e acc =
@@ -378,40 +372,9 @@ type alias NodeVisitor n e acc =
     -> acc
 
 
-type alias NodeVisitorWithDepth n e acc =
-    NodeContext n e
-    -> Int
-    -> Lazy acc
-    -> acc
-
-
 alongOutgoingEdges : NeighborSelector n e
-alongOutgoingEdges graph ctx =
-    ctx.outgoing
-        |> IntDict.keys
-
-
-traverseAllComponents : ComponentSelector n e acc
-traverseAllComponents graph =
-    graph
-        |> Focus.get anyNode
-        |> Maybe.map (\root -> (root.node.id, identity))
-
-
-traverseComponentOf : NodeId -> ComponentSelector n e acc
-traverseComponentOf nodeId graph =
-    graph
-      |> Focus.get (nodeById nodeId)
-      |> Maybe.map (\root -> (root.node.id, identity))
-
-
-traverseAnyOneComponent : Graph n e -> ComponentSelector n e acc
-traverseAnyOneComponent originalGraph currentGraph =
-    if originalGraph /= currentGraph
-    then Nothing
-    else originalGraph
-        |> Focus.get anyNode
-        |> Maybe.map (\root -> (root.node.id, identity))
+alongOutgoingEdges ctx =
+    IntDict.keys (ctx.outgoing)
 
 
 accumulateNodesInList : NodeVisitor n e (List (NodeContext n e))
@@ -419,22 +382,16 @@ accumulateNodesInList ctx rest =
     ctx :: Lazy.force rest
 
 
-ignoreDepth : NodeVisitor n e -> NodeVisitorWithDepth n e
-ignoreDepth visitNode ctx depth acc =
-    visitNode ctx acc
-
-
--- Not Exported.
 -- Abstracting over Stack and Queue without HKTs. We monomorphise NodeId and abstract over the container. 
 -- XIFO is a wildcard match for FIFO (Queue) and LIFO (Stack)
 type alias NodeIdXIFOImpl a =
     { empty : a
-    , push : (NodeId, Int) -> a -> a
-    , pop : a -> Maybe ((NodeId, Int), a)
+    , push : NodeId -> a -> a
+    , pop : a -> Maybe (NodeId, a)
     }
 
 
-stackImpl : NodeIdXIFOImpl (List (NodeId, Int))
+stackImpl : NodeIdXIFOImpl (List NodeId)
 stackImpl =
     { empty = []
     , push = (::)
@@ -445,7 +402,7 @@ stackImpl =
     }
 
 
-queueImpl : NodeIdXIFOImpl (Queue (NodeId, Int))
+queueImpl : NodeIdXIFOImpl (Queue NodeId)
 queueImpl =
     { empty = Queue.empty
     , push = Queue.push
@@ -456,76 +413,74 @@ queueImpl =
 guidedTraversal
     :  NodeIdXIFOImpl a
     -> NeighborSelector n e
-    -> ComponentSelector n e acc
-    -> NodeVisitorWithDepth n e acc
+    -> NodeVisitor n e acc
+    -> List NodeId
     -> acc
     -> Graph n e
-    -> acc
-guidedTraversal xifoImpl selectNeighbors nextComponent visitNode acc graph =
+    -> (acc, Graph n e)
+guidedTraversal xifoImpl selectNeighbors visitNode seeds acc graph =
     -- It may be worthwhile to convert this all to CPS, but who knows
     let pushMany nodeIds xifo =
             List.foldl xifoImpl.push xifo nodeIds
-        component graph =
-            case nextComponent graph of
-                Nothing -> -- No more roots => the traversal terminates
-                    acc
-                Just (root, finish) ->
-                    graph
-                      |> traverse (xifoImpl.empty |> xifoImpl.push root)
-                      |> finish
-        traverse xifo graph = -- This will visit the rest of the graph only as long as visitNode forces it
-            case xifoImpl.pop xifo of
-                Nothing -> -- We are done with this connected component
-                    component graph
-                Just ((next, depth), xifo') ->
+        go seeds graph = -- This will visit the rest of the graph only as long as visitNode forces it
+            case xifoImpl.pop seeds of
+                Nothing -> -- We are done with this connected component, so we return acc and the rest of the graph
+                    (acc, graph)
+                Just (next, xifo') ->
                     case get next graph of
                         -- This can actually happen since we don't filter the xifo for already visited nodes.
-                        Nothing -> traverse xifo' (remove next graph)
+                        Nothing -> go xifo' graph
                         Just ctx ->
-                            visitNode ctx depth <| Lazy.lazy <| \_ ->
-                                let neighbors =
-                                      ctx
-                                        |> selectNeighbors graph
-                                        |> List.map (\nodeId -> (nodeId, depth + 1))
-                                in traverse (pushMany neighbors xifo') (remove next graph)
-    in component graph
-
+                            visitNode ctx <| Lazy.lazy <| \_ ->
+                                let neighbors = selectNeighbors ctx
+                                in go (pushMany neighbors xifo') (remove next graph)
+    in go (pushMany seeds xifoImpl.empty) graph
 
 guidedDfs
     :  NeighborSelector n e
-    -> ComponentSelector n e acc
-    -> NodeVisitorWithDepth n e acc
+    -> NodeVisitor n e acc
+    -> List NodeId
     -> acc
     -> Graph n e
-    -> acc
+    -> (acc, Graph n e)
 guidedDfs =
     guidedTraversal stackImpl
 
 
 guidedBfs
     :  NeighborSelector n e
-    -> ComponentSelector n e acc
-    -> NodeVisitorWithDepth n e acc
+    -> NodeVisitor n e acc
+    -> List NodeId
     -> acc
     -> Graph n e
-    -> acc
+    -> (acc, Graph n e)
 guidedBfs =
     guidedTraversal queueImpl
 
 
 dfs : NodeVisitor n e acc -> acc -> Graph n e -> acc
 dfs visitNode acc graph =
-    guidedDfs alongOutgoingEdges (traverseAnyOneComponent graph) (ignoreDepth visitNode) acc graph
+    guidedDfs alongOutgoingEdges visitNode (nodeIds graph) acc graph
 
 
 bfs : NodeVisitor n e acc -> acc -> Graph n e -> acc
 bfs visitNode acc graph = 
-    guidedBfs alongOutgoingEdges (traverseAnyOneComponent graph) (ignoreDepth visitNode) acc graph
+    guidedBfs alongOutgoingEdges visitNode (nodeIds graph) acc graph
 
 
 dfsList : Graph n e -> List (NodeContext n e)
 dfsList =
     dfs accumulateNodesInList []
+
+
+dfsTree : NodeId -> Graph n e -> Tree n
+dfsTree seed graph =
+    let visitNode ctx acc =
+            
+    in case guidedDfs alongOutgoingEdges visitNode [seed] [] graph of
+         [] -> Tree.empty
+         
+         
 
 
 bfsList : Graph n e -> List (NodeContext n e)

@@ -9,7 +9,7 @@ module Graph
     -- Foci
     , id, label, from, to, node, incoming, outgoing
     , nodeById, anyNode
-    
+
 
     , fold
     , mapContexts
@@ -18,21 +18,22 @@ module Graph
 
     , isSimple
     , symmetricClosure, reverseEdges 
-    , dfsList, dfs, guidedDfs
-    , bfsList, bfs, guidedBfs
+    , dfs, guidedDfs
+--    , bfsList, bfs, guidedBfs
     , heightLevels, topologicalSort
 
     , toString'
     ) where
-    
 
+
+import Graph.Tree as Tree exposing (Tree)
 import IntDict as IntDict exposing (IntDict)
 import Maybe as Maybe exposing (Maybe)
 import Lazy as Lazy exposing (Lazy)
 import Focus as Focus exposing (Focus, (=>))
 import Queue as Queue exposing (Queue)
 import Debug
-    
+
 type alias NodeId = Int
 
 
@@ -366,9 +367,15 @@ type alias NeighborSelector n e =
     -> List NodeId
 
 
-type alias NodeVisitor n e acc =
+type alias DfsNodeVisitor n e acc =
     NodeContext n e
-    -> Lazy acc
+    -> acc
+    -> (acc, acc -> acc)
+
+
+type alias SimpleNodeVisitor n e acc =
+    NodeContext n e
+    -> acc
     -> acc
 
 
@@ -377,115 +384,60 @@ alongOutgoingEdges ctx =
     IntDict.keys (ctx.outgoing)
 
 
-accumulateNodesInList : NodeVisitor n e (List (NodeContext n e))
-accumulateNodesInList ctx rest =
-    ctx :: Lazy.force rest
+onDiscovery : SimpleNodeVisitor n e acc -> DfsNodeVisitor n e acc
+onDiscovery visitor ctx acc =
+    (visitor ctx acc, identity)
 
 
--- Abstracting over Stack and Queue without HKTs. We monomorphise NodeId and abstract over the container. 
--- XIFO is a wildcard match for FIFO (Queue) and LIFO (Stack)
-type alias NodeIdXIFOImpl a =
-    { empty : a
-    , push : NodeId -> a -> a
-    , pop : a -> Maybe (NodeId, a)
-    }
+onFinish : SimpleNodeVisitor n e acc -> DfsNodeVisitor n e acc
+onFinish visitor ctx acc =
+    (acc, visitor ctx)
 
-
-stackImpl : NodeIdXIFOImpl (List NodeId)
-stackImpl =
-    { empty = []
-    , push = (::)
-    , pop xs =
-        case xs of
-            [] -> Nothing
-            x :: xs' -> (x, xs')
-    }
-
-
-queueImpl : NodeIdXIFOImpl (Queue NodeId)
-queueImpl =
-    { empty = Queue.empty
-    , push = Queue.push
-    , pop = Queue.pop
-    }
-
-
-guidedTraversal
-    :  NodeIdXIFOImpl a
-    -> NeighborSelector n e
-    -> NodeVisitor n e acc
-    -> List NodeId
-    -> acc
-    -> Graph n e
-    -> (acc, Graph n e)
-guidedTraversal xifoImpl selectNeighbors visitNode seeds acc graph =
-    -- It may be worthwhile to convert this all to CPS, but who knows
-    let pushMany nodeIds xifo =
-            List.foldl xifoImpl.push xifo nodeIds
-        go seeds graph = -- This will visit the rest of the graph only as long as visitNode forces it
-            case xifoImpl.pop seeds of
-                Nothing -> -- We are done with this connected component, so we return acc and the rest of the graph
-                    (acc, graph)
-                Just (next, xifo') ->
-                    case get next graph of
-                        -- This can actually happen since we don't filter the xifo for already visited nodes.
-                        Nothing -> go xifo' graph
-                        Just ctx ->
-                            visitNode ctx <| Lazy.lazy <| \_ ->
-                                let neighbors = selectNeighbors ctx
-                                in go (pushMany neighbors xifo') (remove next graph)
-    in go (pushMany seeds xifoImpl.empty) graph
 
 guidedDfs
     :  NeighborSelector n e
-    -> NodeVisitor n e acc
+    -> DfsNodeVisitor n e acc
     -> List NodeId
     -> acc
     -> Graph n e
     -> (acc, Graph n e)
-guidedDfs =
-    guidedTraversal stackImpl
+guidedDfs selectNeighbors visitNode seeds acc graph =
+    let go seeds acc graph =
+            case seeds of
+                [] -> -- We are done with this connected component, so we return acc and the rest of the graph
+                    (acc, graph)
+                next :: seeds' ->
+                    case get next graph of
+                        -- This can actually happen since we don't filter for already visited nodes.
+                        Nothing -> go seeds' acc graph
+                        Just ctx ->
+                            let neighbors = selectNeighbors ctx
+                                visitChildren acc' = go neighbors acc' graph' |> fst
+                                (accAfterDiscovery, finishNode) = visitNode ctx acc
+                                (accBeforeFinish, graph') = go neighbors accAfterDiscovery (remove next graph)
+                                accAfterFinish = finishNode accBeforeFinish
+                            in go seeds' accAfterFinish graph'
+    in go seeds acc graph
 
 
-guidedBfs
-    :  NeighborSelector n e
-    -> NodeVisitor n e acc
-    -> List NodeId
-    -> acc
-    -> Graph n e
-    -> (acc, Graph n e)
-guidedBfs =
-    guidedTraversal queueImpl
-
-
-dfs : NodeVisitor n e acc -> acc -> Graph n e -> acc
+dfs : DfsNodeVisitor n e acc -> acc -> Graph n e -> acc
 dfs visitNode acc graph =
-    guidedDfs alongOutgoingEdges visitNode (nodeIds graph) acc graph
+    guidedDfs alongOutgoingEdges visitNode (nodeIds graph) acc graph |> fst
 
 
-bfs : NodeVisitor n e acc -> acc -> Graph n e -> acc
-bfs visitNode acc graph = 
-    guidedBfs alongOutgoingEdges visitNode (nodeIds graph) acc graph
-
-
-dfsList : Graph n e -> List (NodeContext n e)
-dfsList =
-    dfs accumulateNodesInList []
-
-
-dfsTree : NodeId -> Graph n e -> Tree n
+dfsTree : NodeId -> Graph n e -> Tree (NodeContext n e)
 dfsTree seed graph =
-    let visitNode ctx acc =
-            
-    in case guidedDfs alongOutgoingEdges visitNode [seed] [] graph of
-         [] -> Tree.empty
-         
-         
+   case dfsForest [seed] graph of
+       [] -> Tree.empty
+       [tree] -> tree
+       _ -> Debug.crash "dfsTree: There can't be more than one DFS tree. This invariant is violated, please report this bug."
 
 
-bfsList : Graph n e -> List (NodeContext n e)
-bfsList graph =
-    bfs accumulateNodesInList [] graph
+dfsForest : List NodeId -> Graph n e -> List (Tree (NodeContext n e))
+dfsForest seeds graph =
+    let visitNode ctx trees =
+            ([], Tree.inner ctx >> flip (::) trees)
+    in guidedDfs alongOutgoingEdges visitNode seeds [] graph |> fst
 
 
 heightLevels : Graph n e -> List (List (NodeContext n e))
@@ -519,12 +471,14 @@ heightLevels graph =
                     if  | depth == minDepth -> ((ctx :: level) :: lowerLevels, minDepth)
                         | depth + 1 == minDepth -> ([ctx] :: levels, minDepth - 1)
                         | otherwise -> Debug.crash "Graph.heightLevels: Reached a branch which is impossible by invariants. Please file a bug report!"
-    in guidedBfs selectNeighbors startFromSources visitNode [] graph
+    in []--guidedBfs selectNeighbors startFromSources visitNode [] graph
 
 
 topologicalSort : Graph n e -> List (NodeContext n e)
-topologicalSort =
-    heightLevels >> List.concat
+topologicalSort graph =
+    graph
+     |> dfsForest (nodeIds graph) 
+     |> List.concatMap Tree.preOrderList
 
 
 {- toString -}

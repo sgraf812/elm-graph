@@ -19,7 +19,7 @@ type alias Forest a =
 
 
 {- BUILDING -}
-  
+
 
 empty : Tree a
 empty = MkTree Nothing
@@ -29,11 +29,11 @@ leaf : a -> Tree a
 leaf val =
   inner val []
 
-        
+
 inner : a -> List (Tree a) -> Tree a
 inner label children =
   MkTree (Just (InnerNode label children))
-        
+
 
 unfoldTree : (seed -> (label, List seed)) -> seed -> Tree label
 unfoldTree next seed =

@@ -1,5 +1,5 @@
 module Graph
-    ( NodeId, Node, Edge, Adjacency, NodeContext, Decomposition, Graph
+    ( NodeId, Node, Edge, Adjacency, NodeContext, Graph
     -- Building
     , empty, update, insert, remove 
     -- Query
@@ -24,6 +24,14 @@ module Graph
 
     , toString'
     ) where
+
+
+{-|
+
+# Data
+@docs NodeId, Node, Edge, Adjacency, NodeContext, Graph
+
+-}
 
 
 import Graph.Tree as Tree exposing (Tree)
@@ -60,13 +68,6 @@ type alias NodeContext n e =
     }
 
            
-type alias Decomposition n e =
-    { matched : NodeContext n e
-    , rest : Lazy (Graph n e)
-    }
-
-
-
 -- We will only have the Patricia trie based DynGraph implementation for simplicity.
 -- Also, there is no real practical reason to separate that or to allow other implementations
 -- which would justify the complexity.
@@ -442,36 +443,40 @@ dfsForest seeds graph =
 
 heightLevels : Graph n e -> List (List (NodeContext n e))
 heightLevels graph =
-    let isSource graph' nodeId =
-            graph'
-             |> get nodeId
-             |> Maybe.map (.incoming >> IntDict.isEmpty)
-             |> Maybe.withDefault False 
-        startFromSources graph' =
-            graph'
-             |> nodeIds
-             |> List.filter (isSource graph')
-             |> List.head
-             |> Maybe.map (\sourceId -> (sourceId, identity))
-        hasOnlyOneIncomingEdge graph' nodeId =
-            graph'
-             |> get nodeId
-             |> Maybe.map (.incoming >> IntDict.size >> (==) 1)
-             |> Maybe.withDefault False
-        selectNeighbors graph' ctx depth =
-            ctx.outgoing
-             |> IntDict.keys
-             |> List.filter (hasOnlyOneIncomingEdge graph')
-             |> List.map (\id -> (id, depth + 1))
-        visitNode ctx depth rest =
-            let (levels, minDepth) = Lazy.force rest
-            in case levels of
-                [] -> ([[ctx]], depth)
-                level :: lowerLevels ->
-                    if  | depth == minDepth -> ((ctx :: level) :: lowerLevels, minDepth)
-                        | depth + 1 == minDepth -> ([ctx] :: levels, minDepth - 1)
-                        | otherwise -> Debug.crash "Graph.heightLevels: Reached a branch which is impossible by invariants. Please file a bug report!"
-    in []--guidedBfs selectNeighbors startFromSources visitNode [] graph
+    let
+      countIndegrees graph =
+          graph
+           |> fold (\ctx -> IntDict.insert ctx.node.id (IntDict.size ctx.node.incoming)) IntDict.empty
+
+      subtract a b =
+          b - a
+
+      decrementAndNoteSources id _ (nextLevel, indegrees) =
+          let
+            indegrees' = IntDict.update id (subtract 1) indegrees
+          in
+            case IntDict.get id indegrees' of
+                Just 0 -> (id :: nextLevel, indegrees')
+                Nothing (nextLevel, indegrees')
+              
+      decrementIndegrees source nextLevel indegrees =
+          IntDict.foldl updateAndNoteSources (nextLevel, indegrees) source.outgoing
+           
+      go currentLevel nextLevel indegrees graph =
+          case (currentLevel, nextLevel) of
+              ([], []) ->
+                  [[]]
+              ([], _) ->
+                  [] :: go nextLevel [] indegrees graph
+              (source :: currentLevel', _) -> 
+                  let
+                    (nextLevel', indegrees') = decrementIndegrees source nextLevel indegrees
+                  in
+                    case go currentLevel' nextLevel' indegrees' (remove source graph) of
+                      [] -> Debug.crash "Graph.heightLevels: Reached a branch which is impossible by invariants. Please file a bug report!"
+                      level :: levels -> (source :: level) :: levels
+    in
+      go [] (countIndegrees graph) graph
 
 
 topologicalSort : Graph n e -> List (NodeContext n e)

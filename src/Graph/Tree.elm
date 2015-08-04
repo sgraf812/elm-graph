@@ -24,43 +24,41 @@ There are primitives for building and traversing such a tree.
 @docs isEmpty, root
 
 # Traversal
+
+It is instructory to read the article on [tree traversals on Wikipedia](https://en.wikipedia.org/wiki/Tree_traversal) first if you are not familiar with the concept.
+
 @docs levelOrder, levelOrderList, preOrser, preOrderList, postOrder postOrderList
 
 -}
 
-    
+
 import Queue exposing (Queue)
 
 
-type alias InnerNode a =
-    { label : a
-    , children : List (Tree a)
-    }
-
-    
 {-| Data type representing an n-ary tree with node labels of type `a`
 Building such a tree is done with the `empty`, `leaf` and `inner` smart
 constructors. An example for a tree with three leafs and a root node:
 
-    tree = inner 4 [leaf 1, leaf 2, leaf 3] 
+    tree = inner 1 [leaf 2, leaf 3, leaf 4] 
 -}
-type Tree a =
-    MkTree (Maybe (InnerNode a))
-    
+type Tree label =
+  MkTree (Maybe (label, List (Tree label)))
+
 
 {-| This is just an alias for a list of trees, called a forest in the
 literature.
 -}
-type alias Forest a =
-    List (Tree a)
+type alias Forest label =
+  List (Tree label)
 
 
 {- BUILDING -}
 
 
 {-| Construct an empty tree with no nodes. -}
-empty : Tree a
-empty = MkTree Nothing
+empty : Tree label
+empty =
+  MkTree Nothing
 
 
 {-| Construct a tree with a single node from a value for the node's label.
@@ -68,7 +66,7 @@ empty = MkTree Nothing
     tree : Tree Int
     tree = leaf 42
  -}
-leaf : a -> Tree a
+leaf : label -> Tree label
 leaf val =
   inner val []
 
@@ -77,19 +75,26 @@ leaf val =
 subtrees `children` with a `label` for the new inner node which will be
 the root of the tree. Empty subtrees are filtered out. An example:
 
-    tree1 = inner 4 [leaf 1, leaf 2, leaf 3, empty] 
-    tree2 = inner 4 [leaf 1, leaf 2, leaf 3] 
+    tree1 = inner 1 [leaf 2, leaf 3, leaf 4]
+    tree2 = inner 1 [leaf 2, leaf 3, leaf 4, empty]
     tree1 == tree2
 -}
-inner : a -> List (Tree a) -> Tree a
+inner : label -> List (Tree label) -> Tree label
 inner label children =
-  children
-   |> List.filter (not isEmpty)
-   |> InnerNode label
-   |> Just
-   |> MkTree
+  MkTree (Just (label, List.filter (not << isEmpty) children))
 
 
+{-| Construct a new tree with `unfoldTree next seed`, top to bottom. `next` will be
+called repeatedly with seeds, from which it should construct a label for
+the current tree node but also a list of seeds from which to unfold
+child nodes. This sort of works top to bottom compared to creating a
+tree bottom up by using the other primitives.
+
+    tree1 = inner 1 [leaf 2, leaf 3, leaf 4]
+    next seed = (seed, if seed == 1 then [2, 3, 4] else [])
+    tree2 = unfoldTree next 1
+    tree1 == tree2
+-}
 unfoldTree : (seed -> (label, List seed)) -> seed -> Tree label
 unfoldTree next seed =
   let
@@ -98,49 +103,74 @@ unfoldTree next seed =
     inner label (List.map (unfoldTree next) seeds)
 
 
-unfoldForest : (seed -> (label, List seed)) -> List seed -> List (Tree label)
+{-| Construct a new forest with `unfoldForest next seeds` by `unfoldTree next seed`
+for each `seed` in `seeds`. A simple specification would be
+
+    unfoldForest next seeds = List.map (unfoldTree next) seeds
+-}
+unfoldForest : (seed -> (label, List seed)) -> List seed -> Forest label
 unfoldForest next seeds =
   List.map (unfoldTree next) seeds
 
-      
+
 {- QUERY -}
 
 
-isEmpty : Tree a -> Bool
+{-| `isEmpty tree` returns true if and only if `tree` is `empty`.
+
+    isEmpty empty == True
+    isEmpty (leaf 42) == False
+-}
+isEmpty : Tree label -> Bool
 isEmpty tree =
-  case root tree of
-    Just _ -> False
-    Nothing -> True
+  tree == empty
 
+{-| `root tree` returns `Nothing` if `tree` is `empty`, otherwise
+it returns `Just (label, childForest)` of the root node.
 
-root : Tree a -> Maybe (InnerNode a)
-root tree = 
-    case tree of
-        MkTree maybe -> maybe
+    tree = inner 1 [leaf 2, leaf 3, leaf 4]
+    root tree == Just (1, [leaf 2, leaf 3, leaf 4])
+    root empty == Nothing
+-}
+root : Tree label -> Maybe (label, Forest label)
+root tree =
+  case tree of
+    MkTree maybe -> maybe
 
 
 {- TRAVERSAL -}
 
 
--- no type annotation for this, traversal is quite daunting.
+-- This is private. No type annotation for this, traversal is quite daunting.
 listForTraversal traversal tree =
   -- we will compute a DList that we then can turn into a List.
   let
-    f inner rest =
-        (::) inner.label >> rest
+    f label children rest =
+        (::) label >> rest
     acc = identity
   -- the call to postOrder returns a DList ([a] -> [a]), so [] turns it into a list
   in
-    traversal f acc tree []     
+    traversal f acc tree []
 
 
+-- This is also not exported.
 pushMany : List a -> Queue a -> Queue a
 pushMany vals queue =
   List.foldl Queue.push queue vals
 
 
-levelOrder : (InnerNode a -> acc -> acc) -> acc -> Tree a -> acc
-levelOrder f acc tree =
+{-| `levelOrder visit acc tree` is a breadth-first fold over `tree`,
+visiting each node and accumulating results with `visit`. Nodes are visited
+in level-order, e.g. for a tree like
+
+    tree = inner 0 [inner 1 [leaf 2, leaf 3], inner 4 [leaf 5, leaf 6]]
+
+nodes would be visited in order `[0, 1, 4, 2, 3, 5, 6]`. This is in fact the
+list produced by `levelOrderList`, but through `levelOrder` you also get access
+to the children of the current node via the second parameter of visit.
+-}
+levelOrder : (label -> Forest label -> acc -> acc) -> acc -> Tree label -> acc
+levelOrder visit acc tree =
   let
     go acc toVisit =
       case Queue.pop toVisit of
@@ -148,44 +178,89 @@ levelOrder f acc tree =
         Just (tree', toVisit') ->
           case root tree' of
             Nothing -> go acc toVisit'
-            Just inner ->
-              go (f inner acc) (pushMany inner.children toVisit')
+            Just (label, children) ->
+              go (visit label children acc) (pushMany children toVisit')
   in
     go acc (Queue.empty |> Queue.push tree)
 
-              
-levelOrderList : Tree a -> List a
+
+{-| See the documentation on `levelOrder`. `levelOrderList tree` produces
+a list of the nodes of the tree visited in level-order, e.g. breadth-first.
+So:
+
+    tree = inner 0 [inner 1 [leaf 2, leaf 3], inner 4 [leaf 5, leaf 6]]
+    levelOrderList tree == [0, 1, 4, 2, 3, 5, 6]
+
+If you also need information on child trees instead of just the node labels,
+use `levelOrder`.
+-}
+levelOrderList : Tree label -> List label
 levelOrderList =
   listForTraversal levelOrder
-                        
 
-postOrder : (InnerNode a -> acc -> acc) -> acc -> Tree a -> acc
-postOrder f acc tree =
+
+{-| `postOrder visit acc tree` is a (depth-first) post-order traversal (fold)
+over `tree` where `visit` is called with the label and the child sub-forest of
+the current node in addition to a supplied accumulator value.
+
+When `visit` is called for some node, `acc` already contains the value of all
+sub-trees, so post-order traversal is a kind of bottom-up traversal, where
+all children are visited prior to their parent.
+See `postOrderList` for an example on the order in which nodes are visited.
+-}
+postOrder : (label -> Forest label -> acc -> acc) -> acc -> Tree label -> acc
+postOrder visit acc tree =
   let
-    folder = flip (postOrder f)
+    folder = flip (postOrder visit)
   in
     case root tree of
       Nothing -> acc
-      Just inner ->
-        f inner (List.foldl folder acc inner.children)
+      Just (label, children) ->
+        visit label children (List.foldl folder acc children)
 
 
-postOrderList : Tree a -> List a
+{-| See `postOrder` for an explanation of how post-order traversals work.
+Here is an example on visit order:
+
+    tree = inner 0 [inner 1 [leaf 2, leaf 3], inner 4 [leaf 5, leaf 6]]
+    postOrderList tree == [2, 3, 1, 5, 6, 4, 0]
+
+If you also need information on child trees instead of just the node labels,
+use `postOrder`.
+-}
+postOrderList : Tree label -> List label
 postOrderList =
   listForTraversal postOrder
 
-                   
-preOrder : (InnerNode a -> acc -> acc) -> acc -> Tree a -> acc
-preOrder f acc tree =
+
+{-| `preOrder visit acc tree` is a (depth-first) pre-order traversal (fold)
+over `tree` where `visit` is called with the label and the child sub-forest of
+the current node in addition to a supplied accumulator value.
+
+Post-order traversals work top-down: When `visit` is called for some node,
+`acc` already contains the value of all ancestral nodes.
+See `preOrderList` for an example on the order in which nodes are visited.
+-}
+preOrder : (label -> Forest label -> acc -> acc) -> acc -> Tree label -> acc
+preOrder visit acc tree =
   let
-    folder = flip (preOrder f)
+    folder = flip (preOrder visit)
   in
     case root tree of
       Nothing -> acc
-      Just inner ->
-        List.foldl folder (f inner acc) inner.children
+      Just (label, children) ->
+        List.foldl folder (visit label children acc) children
 
 
-preOrderList : Tree a -> List a
+{-| See `preOrder` for an explanation of how post-order traversals work.
+Here is an example on visit order:
+
+    tree = inner 0 [inner 1 [leaf 2, leaf 3], inner 4 [leaf 5, leaf 6]]
+    preOrderList tree == [0, 1, 2, 3, 4, 5, 6]
+
+If you also need information on child trees instead of just the node labels,
+use `preOrder`.
+-}
+preOrderList : Tree label -> List label
 preOrderList =
   listForTraversal preOrder

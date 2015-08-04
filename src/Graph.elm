@@ -34,7 +34,7 @@ module Graph
 -}
 
 
-import Graph.Tree as Tree exposing (Tree)
+import Graph.Tree as Tree exposing (Tree, Forest)
 import IntDict as IntDict exposing (IntDict)
 import Maybe as Maybe exposing (Maybe)
 import Lazy as Lazy exposing (Lazy)
@@ -434,7 +434,7 @@ dfsTree seed graph =
        _ -> Debug.crash "dfsTree: There can't be more than one DFS tree. This invariant is violated, please report this bug."
 
 
-dfsForest : List NodeId -> Graph n e -> List (Tree (NodeContext n e))
+dfsForest : List NodeId -> Graph n e -> Forest (NodeContext n e)
 dfsForest seeds graph =
     let visitNode ctx trees =
             ([], Tree.inner ctx >> flip (::) trees)
@@ -444,24 +444,32 @@ dfsForest seeds graph =
 heightLevels : Graph n e -> List (List (NodeContext n e))
 heightLevels graph =
     let
-      countIndegrees graph =
-          graph
-           |> fold (\ctx -> IntDict.insert ctx.node.id (IntDict.size ctx.node.incoming)) IntDict.empty
+      countIndegrees =
+           fold
+             (\ctx dict ->
+                 IntDict.insert
+                   ctx.node.id
+                   (IntDict.size ctx.incoming)
+                   (Lazy.force dict))
+             IntDict.empty
 
       subtract a b =
           b - a
 
       decrementAndNoteSources id _ (nextLevel, indegrees) =
           let
-            indegrees' = IntDict.update id (subtract 1) indegrees
+            indegrees' = IntDict.update id (Maybe.map (subtract 1)) indegrees
           in
             case IntDict.get id indegrees' of
-                Just 0 -> (id :: nextLevel, indegrees')
-                Nothing (nextLevel, indegrees')
-              
+                Just 0 ->
+                  case get id graph of
+                    Just ctx -> (ctx :: nextLevel, indegrees')
+                    Nothing -> Debug.crash "Graph.heightLevels: Could not get a node of a graph which should be there by invariants. Please file a bug report!"
+                Nothing -> (nextLevel, indegrees')
+
       decrementIndegrees source nextLevel indegrees =
-          IntDict.foldl updateAndNoteSources (nextLevel, indegrees) source.outgoing
-           
+          IntDict.foldl decrementAndNoteSources (nextLevel, indegrees) source.outgoing
+
       go currentLevel nextLevel indegrees graph =
           case (currentLevel, nextLevel) of
               ([], []) ->
@@ -472,11 +480,11 @@ heightLevels graph =
                   let
                     (nextLevel', indegrees') = decrementIndegrees source nextLevel indegrees
                   in
-                    case go currentLevel' nextLevel' indegrees' (remove source graph) of
+                    case go currentLevel' nextLevel' indegrees' (remove source.node.id graph) of
                       [] -> Debug.crash "Graph.heightLevels: Reached a branch which is impossible by invariants. Please file a bug report!"
                       level :: levels -> (source :: level) :: levels
     in
-      go [] (countIndegrees graph) graph
+      go [] [] (countIndegrees graph) graph
 
 
 topologicalSort : Graph n e -> List (NodeContext n e)

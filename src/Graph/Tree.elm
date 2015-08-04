@@ -27,7 +27,7 @@ There are primitives for building and traversing such a tree.
 
 It is instructory to read the article on [tree traversals on Wikipedia](https://en.wikipedia.org/wiki/Tree_traversal) first if you are not familiar with the concept.
 
-@docs levelOrder, levelOrderList, preOrser, preOrderList, postOrder postOrderList
+@docs levelOrder, levelOrderList, preOrder, preOrderList, postOrder, postOrderList
 
 -}
 

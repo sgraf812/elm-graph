@@ -188,24 +188,24 @@ computeEdgeDiff old new =
 
     collect edgeUpdate adj updates =
       IntDict.foldl (collectUpdates edgeUpdate) updates adj
-in
-  case (old, new) of
-    (Nothing, Nothing) ->
-      emptyDiff
-    (Just ctx, Just ctx) ->
-      emptyDiff
-    (Just rem, Nothing) ->
-      { outgoing = IntDict.empty |> collect Remove rem.incoming
-      , incoming = IntDict.empty |> collect Remove rem.outgoing
-      }
-    (Nothing, Just ins) ->
-      { outgoing = IntDict.empty |> collect Insert ins.incoming
-      , incoming = IntDict.empty |> collect Insert ins.outgoing
-      }
-    (Just rem, Just ins) ->
-      { outgoing = IntDict.empty |> collect Remove rem.incoming |> collect Insert ins.incoming
-      , incoming = IntDict.empty |> collect Remove rem.outgoing |> collect Insert ins.outgoing
-      }
+  in
+    case (old, new) of
+      (Nothing, Nothing) ->
+        emptyDiff
+      (Just ctx, Just ctx) ->
+        emptyDiff
+      (Just rem, Nothing) ->
+        { outgoing = IntDict.empty |> collect Remove rem.incoming
+        , incoming = IntDict.empty |> collect Remove rem.outgoing
+        }
+      (Nothing, Just ins) ->
+        { outgoing = IntDict.empty |> collect Insert ins.incoming
+        , incoming = IntDict.empty |> collect Insert ins.outgoing
+        }
+      (Just rem, Just ins) ->
+        { outgoing = IntDict.empty |> collect Remove rem.incoming |> collect Insert ins.incoming
+        , incoming = IntDict.empty |> collect Remove rem.outgoing |> collect Insert ins.outgoing
+        }
 
 
 applyEdgeDiff : NodeId -> EdgeDiff e -> GraphRep n e -> GraphRep n e
@@ -398,7 +398,7 @@ nodes =
     nodeIds graph == [1, 2]
 -}
 nodeIds : Graph n e -> List (NodeId)
-nodeIds graph =
+nodeIds =
   Focus.get graphRep >> IntDict.keys
 
 

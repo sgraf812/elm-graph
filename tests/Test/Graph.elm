@@ -31,7 +31,7 @@ dressUp =
       , Node 6 "Shoes"
       ]
 
-    e from to = 
+    e from to =
       Edge from to ()
 
     edges =
@@ -76,26 +76,26 @@ tests =
         , test "id 99, Nothing" <| assertEqual Nothing (Graph.get 99 dressUp)
         ]
 
-    nodeRangeTests =
-      suite "nodeRange"
+    nodeIdRangeTests =
+      suite "nodeIdRange"
         [ test "dressUp: [0, 6]" <|
             assertEqual
               (Just (0, 6))
-              (Graph.nodeRange dressUp)
+              (Graph.nodeIdRange dressUp)
         , test "dressUp - 1: [1, 6]" <|
             assertEqual
-              (Just (1, 6)) 
-              (dressUp |> Graph.remove 0 |> Graph.nodeRange)
+              (Just (1, 6))
+              (dressUp |> Graph.remove 0 |> Graph.nodeIdRange)
         , test "dressUp - 6: [0, 5]" <|
             assertEqual
               (Just (0, 5))
-              (dressUp |> Graph.remove 6 |> Graph.nodeRange)
+              (dressUp |> Graph.remove 6 |> Graph.nodeIdRange)
         ]
 
     listRepTests =
       suite "list conversions"
         [ test "nodeIds" <|
-            assertEqual 
+            assertEqual
               [0, 1, 2, 3, 4, 5, 6]
               (dressUp |> Graph.nodeIds)
         , test "nodes" <|
@@ -150,14 +150,14 @@ tests =
               (Just "Ring")
               (dressUp
                  |> Graph.insert (noNeighbors (Node 0 "Ring"))
-                 |> Graph.get 0 
+                 |> Graph.get 0
                  |> Maybe.map (.node >> .label))
         , test "replace node - replaces adjacency" <|
             assertEqual
               (Just True)
               (dressUp
                  |> Graph.insert (noNeighbors (Node 0 "Ring"))
-                 |> Graph.get 0 
+                 |> Graph.get 0
                  |> Maybe.map (\ctx -> IntDict.isEmpty ctx.incoming && IntDict.isEmpty ctx.outgoing))
         ]
 
@@ -166,7 +166,7 @@ tests =
         [ test "nonexistent node" <|
             assertEqual
               dressUp
-              (dressUp |> Graph.remove 99) 
+              (dressUp |> Graph.remove 99)
         , test "existing node - size" <|
             assertEqual
               (dressUp |> Graph.size |> flip (-) 1)
@@ -263,7 +263,7 @@ tests =
         [ emptyTests
         , memberTests
         , getTests
-        , nodeRangeTests
+        , nodeIdRangeTests
         , listRepTests
         , focusTests
         , insertTests

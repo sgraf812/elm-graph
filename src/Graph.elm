@@ -31,6 +31,30 @@ module Graph
 # Data
 @docs NodeId, Node, Edge, Adjacency, NodeContext, Graph
 
+# Building
+@docs empty, update, insert, remove
+
+# Query
+@docs isEmpty, size, member, get, nodeRange
+
+# List representations
+@docs nodeIds, nodes, edges, fromNodesAndEdges
+
+# Foci
+@docs id, label, from, to, node, incoming, outgoing, nodeById, anyNode
+
+# Transforms
+@docs fold, mapContexts, mapNodes, mapEdges, reverseEdges, symmetricsClosure
+
+# Characterization
+@docs isSimple
+
+# Traversals
+@docs NeighborSelector, DfsNodeVisitor, SimpleNodeVisitor, dfs, guidedDfs, bfs, guidedBfs
+
+# Topological Sort
+@docs topologicalSort, heightLevels
+
 -}
 
 
@@ -42,40 +66,69 @@ import Focus as Focus exposing (Focus, (=>))
 import Queue as Queue exposing (Queue)
 import Debug
 
+
+{-| The type used for identifying nodes, an integer.
+-}
 type alias NodeId = Int
 
 
+{-| The type representing a node: An identifier with
+a label.
+-}
 type alias Node n =
-    { id : NodeId
-    , label : n
-    }
+  { id : NodeId
+  , label : n
+  }
 
      
+{-| Represents a directd edge in the graph. In addition
+to start and end node identifiers, a label value can
+be attached to an edge.
+-}
 type alias Edge e =
-    { from : NodeId
-    , to : NodeId
-    , label : e 
-    }
+  { from : NodeId
+  , to : NodeId
+  , label : e 
+  }
 
        
-type alias Adjacency e = IntDict e
+{-| Adjacency is represented as an ordered dictionary
+rather than as an ordered list. This enables more dynamic
+graphs with efficient edge removal and insertion on the run.
+-}
+type alias Adjacency e =
+  IntDict e
 
 
+{-| Represents a node with its incoming and outgoing edges
+(predecessors and successors).
+-}
 type alias NodeContext n e =
-    { node : Node n
-    , incoming : Adjacency e
-    , outgoing : Adjacency e
-    }
+  { node : Node n
+  , incoming : Adjacency e
+  , outgoing : Adjacency e
+  }
 
            
 -- We will only have the Patricia trie based DynGraph implementation for simplicity.
 -- Also, there is no real practical reason to separate that or to allow other implementations
 -- which would justify the complexity.
 
-type alias GraphRep n e = IntDict (NodeContext n e)
+type alias GraphRep n e =
+  IntDict (NodeContext n e)
 
-    
-type Graph n e = Graph (GraphRep n e)
+{-| The central graph type. It is parameterized both over the node label type `n`
+and the edge label type `e`.
+
+One can build such a graph with the primitives under *Build*. Most of the time
+`fromNodesAndEdges` works fairly well.
+
+For simplicity, this library just uses a patricia trie based graph representation, which means
+it is just an efficient version of `Dict NodeId (NodeContext n e)`. This allows efficient insertion and
+removal of nodes of the graph after building.
+-}
+type Graph n e =
+  Graph (GraphRep n e)
 
 
 unGraph : Graph n e -> GraphRep n e
@@ -84,6 +137,10 @@ unGraph graph = case graph of Graph rep -> rep
 
 {- BUILD -}
 
+{-| An empty graph.
+
+    size empty == 0
+-}
 empty : Graph n e
 empty = Graph IntDict.empty
 
@@ -152,6 +209,8 @@ applyEdgeDiff nodeId diff =
      >> foldl' (updateAdjacency (outgoing => lookup nodeId)) diff.outgoing
 
 
+{-| 
+-}
 update : NodeId -> (Maybe (NodeContext n e) -> Maybe (NodeContext n e)) -> Graph n e -> Graph n e
 update nodeId updater =
    -- This basically wraps updater so that the edges are consistent.

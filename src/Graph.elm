@@ -1,9 +1,9 @@
 module Graph
     ( NodeId, Node, Edge, Adjacency, NodeContext, Graph
     -- Building
-    , empty, update, insert, remove 
+    , empty, update, insert, remove
     -- Query
-    , isEmpty, size, member, get, nodeRange
+    , isEmpty, size, member, get, nodeIdRange
     -- List representations
     , nodeIds, nodes, edges, fromNodesAndEdges
     -- Foci
@@ -17,7 +17,7 @@ module Graph
     , mapEdges
 
     , isSimple
-    , symmetricClosure, reverseEdges 
+    , symmetricClosure, reverseEdges
     , dfs, guidedDfs
 --    , bfsList, bfs, guidedBfs
     , heightLevels, topologicalSort
@@ -35,7 +35,7 @@ module Graph
 @docs empty, update, insert, remove
 
 # Query
-@docs isEmpty, size, member, get, nodeRange
+@docs isEmpty, size, member, get, nodeIdRange
 
 # List representations
 @docs nodeIds, nodes, edges, fromNodesAndEdges
@@ -69,7 +69,8 @@ import Debug
 
 {-| The type used for identifying nodes, an integer.
 -}
-type alias NodeId = Int
+type alias NodeId =
+  Int
 
 
 {-| The type representing a node: An identifier with
@@ -80,7 +81,7 @@ type alias Node n =
   , label : n
   }
 
-     
+
 {-| Represents a directd edge in the graph. In addition
 to start and end node identifiers, a label value can
 be attached to an edge.
@@ -88,10 +89,10 @@ be attached to an edge.
 type alias Edge e =
   { from : NodeId
   , to : NodeId
-  , label : e 
+  , label : e
   }
 
-       
+
 {-| Adjacency is represented as an ordered dictionary
 rather than as an ordered list. This enables more dynamic
 graphs with efficient edge removal and insertion on the run.
@@ -109,7 +110,7 @@ type alias NodeContext n e =
   , outgoing : Adjacency e
   }
 
-           
+
 -- We will only have the Patricia trie based DynGraph implementation for simplicity.
 -- Also, there is no real practical reason to separate that or to allow other implementations
 -- which would justify the complexity.
@@ -132,7 +133,8 @@ type Graph n e =
 
 
 unGraph : Graph n e -> GraphRep n e
-unGraph graph = case graph of Graph rep -> rep
+unGraph graph =
+  case graph of Graph rep -> rep
 
 
 {- BUILD -}
@@ -142,219 +144,422 @@ unGraph graph = case graph of Graph rep -> rep
     size empty == 0
 -}
 empty : Graph n e
-empty = Graph IntDict.empty
+empty =
+  Graph IntDict.empty
 
 
 type EdgeUpdate e =
-    Insert e
-    | Remove e
+  Insert e
+  | Remove e
 
 
 type alias EdgeDiff e =
-   { incoming : IntDict (EdgeUpdate e)
-   , outgoing : IntDict (EdgeUpdate e)
-   }
+  { incoming : IntDict (EdgeUpdate e)
+  , outgoing : IntDict (EdgeUpdate e)
+  }
 
 
 emptyDiff : EdgeDiff e
 emptyDiff =
-   { incoming = IntDict.empty
-   , outgoing = IntDict.empty
-   }
-     
+  { incoming = IntDict.empty
+  , outgoing = IntDict.empty
+  }
+
 
 computeEdgeDiff : Maybe (NodeContext n e) -> Maybe (NodeContext n e) -> EdgeDiff e
 computeEdgeDiff old new =
-    let collectUpdates edgeUpdate updatedId label =
-            let replaceUpdate old =
-                    case (old, edgeUpdate label) of
-                        (Just (Remove lbl), (Insert lbl)) -> Nothing
-                        (Just (Remove _), (Insert newLbl)) -> Just (Insert newLbl)
-                        (Just (Remove _), (Remove _)) ->
-                            Debug.crash "computeEdgeDiff collected two removals for the same edge. This is an error in the implementation of Data.Graph and you should file a bug report!"
-                        (Just (Insert _), _) ->
-                            Debug.crash "computeEdgeDiff collected inserts before removals. This is an error in the implementation of Data.Graph and you should file a bug report!"
-                        (Nothing, eu) -> Just eu
-            in IntDict.update updatedId replaceUpdate
-        collect edgeUpdate adj updates =
-            IntDict.foldl (collectUpdates edgeUpdate) updates adj
-    in case (old, new) of
-        (Nothing, Nothing) -> emptyDiff
-        (Just ctx, Just ctx) -> emptyDiff
-        (Just rem, Nothing) ->
-            { outgoing = IntDict.empty |> collect Remove rem.incoming
-            , incoming = IntDict.empty |> collect Remove rem.outgoing
-            }
-        (Nothing, Just ins) -> 
-            { outgoing = IntDict.empty |> collect Insert ins.incoming
-            , incoming = IntDict.empty |> collect Insert ins.outgoing
-            }
-        (Just rem, Just ins) ->
-            { outgoing = IntDict.empty |> collect Remove rem.incoming |> collect Insert ins.incoming
-            , incoming = IntDict.empty |> collect Remove rem.outgoing |> collect Insert ins.outgoing
-            }
+  let
+    collectUpdates edgeUpdate updatedId label =
+      let
+        replaceUpdate old =
+          case (old, edgeUpdate label) of
+            (Just (Remove lbl), (Insert lbl)) ->
+              Nothing
+            (Just (Remove _), (Insert newLbl)) ->
+              Just (Insert newLbl)
+            (Just (Remove _), (Remove _)) ->
+              Debug.crash "Graph.computeEdgeDiff: Collected two removals for the same edge. This is an error in the implementation of Data.Graph and you should file a bug report!"
+            (Just (Insert _), _) ->
+              Debug.crash "Graph.computeEdgeDiff: Collected inserts before removals. This is an error in the implementation of Data.Graph and you should file a bug report!"
+            (Nothing, eu) ->
+              Just eu
+      in
+        IntDict.update updatedId replaceUpdate
+
+    collect edgeUpdate adj updates =
+      IntDict.foldl (collectUpdates edgeUpdate) updates adj
+in
+  case (old, new) of
+    (Nothing, Nothing) ->
+      emptyDiff
+    (Just ctx, Just ctx) ->
+      emptyDiff
+    (Just rem, Nothing) ->
+      { outgoing = IntDict.empty |> collect Remove rem.incoming
+      , incoming = IntDict.empty |> collect Remove rem.outgoing
+      }
+    (Nothing, Just ins) ->
+      { outgoing = IntDict.empty |> collect Insert ins.incoming
+      , incoming = IntDict.empty |> collect Insert ins.outgoing
+      }
+    (Just rem, Just ins) ->
+      { outgoing = IntDict.empty |> collect Remove rem.incoming |> collect Insert ins.incoming
+      , incoming = IntDict.empty |> collect Remove rem.outgoing |> collect Insert ins.outgoing
+      }
 
 
 applyEdgeDiff : NodeId -> EdgeDiff e -> GraphRep n e -> GraphRep n e
-applyEdgeDiff nodeId diff =
-    let foldl' f dict acc = IntDict.foldl f acc dict
-        edgeUpdateToMaybe edgeUpdate =
-            case edgeUpdate of
-                Insert lbl -> Just lbl
-                Remove _ -> Nothing
-        updateAdjacency edgeFocus updatedId edgeUpdate =
-            let updateLbl = Focus.set edgeFocus (edgeUpdateToMaybe edgeUpdate)
-            in IntDict.update updatedId (Maybe.map updateLbl) -- ignores edges to nodes not in the graph
-    in  foldl' (updateAdjacency (incoming => lookup nodeId)) diff.incoming
-     >> foldl' (updateAdjacency (outgoing => lookup nodeId)) diff.outgoing
+applyEdgeDiff nodeId diff graphRep =
+  let
+    foldl' f dict acc =
+      IntDict.foldl f acc dict
+
+    edgeUpdateToMaybe edgeUpdate =
+      case edgeUpdate of
+        Insert lbl -> Just lbl
+        Remove _ -> Nothing
+
+    updateAdjacency edgeFocus updatedId edgeUpdate =
+      let
+        updateLbl =
+          Focus.set edgeFocus (edgeUpdateToMaybe edgeUpdate)
+      in
+        IntDict.update updatedId (Maybe.map updateLbl) -- ignores edges to nodes not in the graph
+
+  in
+    graphRep
+      |> foldl' (updateAdjacency (incoming => lookup nodeId)) diff.incoming
+      |> foldl' (updateAdjacency (outgoing => lookup nodeId)) diff.outgoing
 
 
-{-| 
+{-| Analogous to `Dict.update`, `update nodeId updater graph` will find
+the node context of the node with id `nodeId` in `graph`. It will then call `updater`
+with that `Just` that node context if that node was found and `Nothing`
+otherwise. `updater` can then return `Just` an updated node context
+(modifying edges is also permitted!) or delete the node by returning
+`Nothing`. The updated `graph` is returned.
+
+This is the most powerful building function since all possible per-node
+operations are possible (node removal, insertion and updating of context
+properties).
+
+The other operations can be implemented in terms of `update` like this:
+
+    remove nodeId graph = update nodeId (always Nothing) graph
+    insert nodeContext graph = update nodeContext.node.id (always (Just nodeContext)) graph
 -}
 update : NodeId -> (Maybe (NodeContext n e) -> Maybe (NodeContext n e)) -> Graph n e -> Graph n e
 update nodeId updater =
-   -- This basically wraps updater so that the edges are consistent.
-   -- This is, it cannot use the lookup focus, because it needs to update other contexts, too. 
-   let updater' rep = 
-           let old = IntDict.get nodeId rep
-               new = updater old
-               diff = computeEdgeDiff old new
-           in rep
-               |> applyEdgeDiff nodeId diff
-               |> IntDict.update nodeId updater
-   in Focus.update graphRep updater'
+  -- This basically wraps updater so that the edges are consistent.
+  -- This is, it cannot use the lookup focus, because it needs to update other contexts, too.
+  let
+    updater' rep =
+      let
+        old =
+          IntDict.get nodeId rep
+
+        new =
+          updater old
+
+        diff =
+          computeEdgeDiff old new
+      in
+        rep
+          |> applyEdgeDiff nodeId diff
+          |> IntDict.update nodeId updater
+  in
+    Focus.update graphRep updater'
 
 
+{-| Analogous to `Dict.insert`, `insert nodeContext graph` inserts a fresh node
+with its context (label, id and edges) into `graph`. If there was already a node
+with the same id, it will be replaced by the new node context.
+
+    graph1 = fromNodesAndEdges [Node 1 "1"] []
+    newNode =
+      { node = Node 2 "2"
+      , incoming = IntDict.singleton 1 () -- so there will be an edge from 1 to 2
+      , outgoing = IntDict.empty
+      }
+    graph2 = insert newNode graph1
+    size graph2 == 2
+
+It's possible to build up whole graphs this way, but a lot less tedious way would
+be simply to use `fromNodesAndEdges`.
+-}
 insert : NodeContext n e -> Graph n e -> Graph n e
 insert nodeContext graph =
-    update nodeContext.node.id (always (Just nodeContext)) graph
+  update nodeContext.node.id (always (Just nodeContext)) graph
 
 
+{-| Analogous to `Dict.remove`, `remove nodeId graph` returns a version of `graph`
+without a node with id `nodeId`. If there was no node with that id, then remove
+is a no-op:
+
+    graph = fromNodesAndEdges [Node 1 "1", Node 2 "2"] [Edge 1 2 ()]
+    graph == remove 42 graph
+    graph |> remove 2 |> size == 1
+-}
 remove : NodeId -> Graph n e -> Graph n e
-remove nodeId graph = 
-    update nodeId (always Nothing) graph
-            
+remove nodeId graph =
+  update nodeId (always Nothing) graph
+
 
 {- QUERY -}
 
 
+{-| `isEmpty graph` is true if and only if there are no nodes in the graph.
+Some properties to reason about in code, which hold for any `graph`:
+
+    isEmpty graph =
+      graph == empty
+    isEmpty graph =
+      size graph == 0
+-}
 isEmpty : Graph n e -> Bool
-isEmpty graph = IntDict.isEmpty (unGraph graph)
+isEmpty graph =
+  graph == empty
 
 
+{-| `size graph` returns the number of nodes in `graph`.
+
+    size empty == 0
+    graph = fromNodesAndEdges [Node 1 "1", Node 2 "2"] []
+    size graph == 2
+-}
 size : Graph n e -> Int
 size =
-   Focus.get graphRep >> IntDict.size
-                
+  Focus.get graphRep >> IntDict.size
 
+
+{-| Analogous to `Dict.member`, `member nodeId graph` is true, if and only if
+there is a node with id `nodeId` in `graph`.
+
+    graph = fromNodesAndEdges [Node 1 "1", Node 2 "2"] []
+    member 42 graph == False
+    member 1 graph == True
+-}
 member : NodeId -> Graph n e -> Bool
 member nodeId =
-   Focus.get graphRep >> IntDict.member nodeId
+  Focus.get graphRep >> IntDict.member nodeId
 
 
+{-| Analogous to `Dict.get`, `get nodeId graph` returns the `Just` the node
+context with id `nodeId` in `graph` if there is one and `Nothing` otherwise.
+
+    graph = fromNodesAndEdges [Node 1 "1", Node 2 "2"] []
+    get 42 graph == Nothing
+    get 1 graph == Just <node context of node 1>
+-}
 get : NodeId -> Graph n e -> Maybe (NodeContext n e)
 get nodeId =
-   Focus.get (graphRep => lookup nodeId) 
+  Focus.get (graphRep => lookup nodeId)
 
-   
-nodeRange : Graph n e -> Maybe (NodeId, NodeId)
-nodeRange graph =
-    let rep = Focus.get graphRep graph
-    in  IntDict.findMin rep `Maybe.andThen` \(min, _) ->
-        IntDict.findMax rep `Maybe.andThen` \(max, _) ->
-        Just (min, max)
+
+{-| `nodeIdRange graph` returns `Just (minNodeId, maxNodeId)` if `graph` is not empty and `Nothing`
+otherwise.
+
+This is useful for finding unoccupied node ids without trial and error.
+
+    nodeIdRange empty == Nothing
+    graph = fromNodesAndEdges [Node 1 "1", Node 2 "2"] []
+    nodeIdRange graph == Just (1, 2)
+-}
+nodeIdRange : Graph n e -> Maybe (NodeId, NodeId)
+nodeIdRange graph =
+  let
+    rep =
+      Focus.get graphRep graph
+  in
+    IntDict.findMin rep `Maybe.andThen` \(min, _) ->
+    IntDict.findMax rep `Maybe.andThen` \(max, _) ->
+    Just (min, max)
 
 
 {- LIST REPRESENTATIONS -}
-            
 
+
+{-| `nodes graph` returns a list of all `Node`s (e.g. `id` and `label`) in
+`graph`.
+
+    nodes empty == []
+    graph = fromNodesAndEdges [Node 1 "1", Node 2 "2"] []
+    nodes graph == [Node 1 "1", Node 2 "2"]
+-}
 nodes : Graph n e -> List (Node n)
-nodes graph =
-    case graph of
-      Graph rep -> List.map .node (IntDict.values rep)
+nodes =
+  Focus.get graphRep >> IntDict.values >> List.map .node
 
-      
+
+{-| `nodeIds graph` returns a list of all nodes' ids in `graph`.
+
+    nodeIds empty == []
+    graph = fromNodesAndEdges [Node 1 "1", Node 2 "2"] []
+    nodeIds graph == [1, 2]
+-}
 nodeIds : Graph n e -> List (NodeId)
 nodeIds graph =
-    case graph of
-      Graph rep -> IntDict.keys rep
+  Focus.get graphRep >> IntDict.keys
 
-      
+
+{-| `edges graph` returns a list of all `Edge`s (e.g. a record of `from` and `to` ids
+and a `label`) in `graph`.
+
+    edges empty == []
+    graph = fromNodesAndEdges [Node 1 "1", Node 2 "2"] [Edge 1 2 "->"]
+    edges graph == [Edge 1 2 "->"]
+-}
 edges : Graph n e -> List (Edge e)
 edges graph =
-    let foldl' f dict list = IntDict.foldl f list dict -- so that we can use pointfree notation
-        prependEdges node1 ctx =
-             foldl' (\node2 e -> (::) { to = node2, from = node1, label = e }) ctx.outgoing 
-    in case graph of
-         Graph rep ->
-             foldl' prependEdges rep []
+  let
+    foldl' f dict list =
+      IntDict.foldl f list dict -- dict and list flipped, so that we can use pointfree notation
 
-             
+    prependEdges node1 ctx =
+      foldl' (\node2 e -> (::) { to = node2, from = node1, label = e }) ctx.outgoing
+  in
+    foldl' prependEdges (unGraph graph) []
+
+
+{-| `fromNodesAndEdges nodes edges` constructs a graph from the supplied `nodes`
+and `edges`. This is the most comfortable way to construct a graph as a whole.
+
+The following constructs a graph with 2 nodes with a string label, connected
+by an edge labeled "->".
+
+    graph = fromNodesAndEdges [Node 1 "1", Node 2 "2"] [Edge 1 2 "->"]
+-}
 fromNodesAndEdges : List (Node n) -> List (Edge e) -> Graph n e
-fromNodesAndEdges nodes edges = 
-    let nodeRep = List.foldl (\n rep -> IntDict.insert n.id { node = n, outgoing = IntDict.empty, incoming = IntDict.empty } rep) IntDict.empty nodes
-        addEdge edge rep =
-            let updateOutgoing ctx =
-                    { ctx | outgoing <- IntDict.insert edge.to edge.label ctx.outgoing }
-                updateIncoming ctx =
-                    { ctx | incoming <- IntDict.insert edge.from edge.label ctx.incoming }
-            in rep
-                |> IntDict.update edge.from (Maybe.map updateOutgoing)
-                |> IntDict.update edge.to (Maybe.map updateIncoming)
-    in Graph (List.foldl addEdge nodeRep edges)
-        
+fromNodesAndEdges nodes edges =
+  let
+    nodeRep =
+      List.foldl
+        (\n ->
+          IntDict.insert n.id (NodeContext n IntDict.empty IntDict.empty))
+        IntDict.empty
+        nodes
+
+    addEdge edge rep =
+      let
+        updateOutgoing ctx =
+          { ctx | outgoing <- IntDict.insert edge.to edge.label ctx.outgoing }
+
+        updateIncoming ctx =
+          { ctx | incoming <- IntDict.insert edge.from edge.label ctx.incoming }
+      in
+        rep
+          |> IntDict.update edge.from (Maybe.map updateOutgoing)
+          |> IntDict.update edge.to (Maybe.map updateIncoming)
+    in
+      Graph (List.foldl addEdge nodeRep edges)
+
 
 {- FOCI -}
 
 
+{-| Focus for the `id` field of `Node`.
+-}
 id : Focus { record | id : field } field
-id = Focus.create .id (\update record -> { record | id <- update record.id }) 
+id =
+  Focus.create .id (\update record -> { record | id <- update record.id })
 
-     
+
+{-| Focus for the `label` field of `Node` and `Edge`.
+-}
 label : Focus { record | label : field } field
-label = Focus.create .label (\update record -> { record | label <- update record.label }) 
+label =
+  Focus.create .label (\update record -> { record | label <- update record.label })
 
 
+{-| Focus for the `from` field of `Edge`.
+-}
 from : Focus { record | from : field } field
-from = Focus.create .from (\update record -> { record | from <- update record.from }) 
+from =
+  Focus.create .from (\update record -> { record | from <- update record.from })
 
-       
+
+{-| Focus for the `to` field of `Edge`.
+-}
 to : Focus { record | to : field } field
-to = Focus.create .to (\update record -> { record | to <- update record.to }) 
+to =
+  Focus.create .to (\update record -> { record | to <- update record.to })
 
 
+{-| Focus for the `node` field of `NodeContext`.
+-}
 node : Focus { record | node : field } field
-node = Focus.create .node (\update record -> { record | node <- update record.node }) 
+node =
+  Focus.create .node (\update record -> { record | node <- update record.node })
 
 
+{-| Focus for the `incoming` field of `NodeContext`.
+-}
 incoming : Focus { record | incoming : field } field
-incoming = Focus.create .incoming (\update record -> { record | incoming <- update record.incoming }) 
-          
+incoming =
+  Focus.create .incoming (\update record -> { record | incoming <- update record.incoming })
 
+
+{-| Focus for the `outgoing` field of `NodeContext`.
+-}
 outgoing : Focus { record | outgoing : field } field
-outgoing = Focus.create .outgoing (\update record -> { record | outgoing <- update record.outgoing }) 
+outgoing =
+  Focus.create .outgoing (\update record -> { record | outgoing <- update record.outgoing })
 
 
 graphRep : Focus (Graph n e) (GraphRep n e)
-graphRep = Focus.create unGraph (\update -> unGraph >> update >> Graph)
+graphRep =
+  Focus.create unGraph (\update -> unGraph >> update >> Graph)
 
 
 lookup : NodeId -> Focus (IntDict v) (Maybe v)
-lookup nodeId = Focus.create (IntDict.get nodeId) (IntDict.update nodeId)
+lookup nodeId =
+  Focus.create (IntDict.get nodeId) (IntDict.update nodeId)
 
 
+{-|  `nodeById nodeId` focuses on the node with id `nodeId` with a `Graph`.
+Since the node might or might not exist, the small part on which we focus wraps
+the `NodeContext` in a `Maybe`.
+
+This is a combination of the `get` and `update` functions which is handy for
+composition of foci deep into a graph. Unfortunately, we need a combinator which
+would get rid of the `Maybe` wrapping (that would be the task of a prism I think),
+but suppose we have something like `Focus.withDefault : a -> Focus (Maybe a) a`,
+then we could define
+
+    ctx = NodeContext (Node 2 "2") IntDict.empty IntDict.empty
+    focus = nodeById 2 => Focus.withDefault ctx => node => label
+    graph = fromNodesAndEdges [Node 1 "1", Node 2 "2"] [Edge 1 2 "->"]
+    graph' = Focus.set focus graph "<-"
+    Focus.get focus graph' == "<-"
+
+Well, I hope I could bring over the point.
+-}
 nodeById : NodeId -> Focus (Graph n e) (Maybe (NodeContext n e))
-nodeById nodeId = Focus.create (get nodeId) (update nodeId)
-          
+nodeById nodeId =
+  Focus.create (get nodeId) (update nodeId)
 
+
+{-| Focuses on an arbitrary `NodeContext` of a `Graph`.
+This exists for the same purposes as `nodeById`, but this focuses on an
+arbitrary node rather than on a node with a specific id.
+-}
 anyNode : Focus (Graph n e) (Maybe (NodeContext n e))
 anyNode =
-    let getMinId = Focus.get graphRep >> IntDict.findMin >> Maybe.map fst
-        get graph = getMinId graph `Maybe.andThen` \id -> Focus.get (nodeById id) graph
-        update upd graph =
-            let nodeId = Maybe.withDefault 0 (getMinId graph)
-            in Focus.update (nodeById nodeId) upd graph
-    in Focus.create get update
+  let
+    getMinId =
+      Focus.get graphRep >> IntDict.findMin >> Maybe.map fst
+
+    get graph =
+      getMinId graph `Maybe.andThen` \id -> Focus.get (nodeById id) graph
+
+    update upd graph =
+      let
+        nodeId =
+          Maybe.withDefault 0 (getMinId graph)
+      in
+        Focus.update (nodeById nodeId) upd graph
+  in
+    Focus.create get update
 
 
 {- TRANSFORMS -}
@@ -374,7 +579,7 @@ mapContexts f = fold (\ctx -> Lazy.force >> insert (f ctx)) empty
 mapNodes : (n1 -> n2) -> Graph n1 e -> Graph n2 e
 mapNodes f = fold (\ctx -> Lazy.force >> insert { ctx | node <- { id = ctx.node.id, label = f ctx.node.label } }) empty
 
-             
+
 mapEdges : (e1 -> e2) -> Graph n e1 -> Graph n e2
 mapEdges f =
     fold (\ctx -> Lazy.force >> insert
@@ -535,7 +740,7 @@ heightLevels graph =
                   [[]]
               ([], _) ->
                   [] :: go nextLevel [] indegrees graph
-              (source :: currentLevel', _) -> 
+              (source :: currentLevel', _) ->
                   let
                     (nextLevel', indegrees') = decrementIndegrees source nextLevel indegrees
                   in
@@ -549,7 +754,7 @@ heightLevels graph =
 topologicalSort : Graph n e -> List (NodeContext n e)
 topologicalSort graph =
     graph
-     |> dfsForest (nodeIds graph) 
+     |> dfsForest (nodeIds graph)
      |> List.concatMap Tree.preOrderList
 
 

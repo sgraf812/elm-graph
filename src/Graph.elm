@@ -61,7 +61,6 @@ module Graph
 import Graph.Tree as Tree exposing (Tree, Forest)
 import IntDict as IntDict exposing (IntDict)
 import Maybe as Maybe exposing (Maybe)
-import Lazy as Lazy exposing (Lazy)
 import Focus as Focus exposing (Focus, (=>))
 import Queue as Queue exposing (Queue)
 import Debug
@@ -565,98 +564,195 @@ anyNode =
 {- TRANSFORMS -}
 
 
-fold : (NodeContext n e -> Lazy acc -> acc) -> acc -> Graph n e -> acc
+{-| A fold over all node contexts. The accumulated value is computed lazily,
+so that the fold can exit early when the suspended accumulator is not forced.
+
+    hasLoop ctx = IntDict.member ctx.node.id ctx.incoming
+    graph = fromNodesAndEdges [Node 1 "1", Node 2 "2"] [Edge 1 2 "->"]
+    -- The graph should not have any loop.
+    fold (\ctx acc -> acc || hasLoop ctx) False graph == False
+-}
+fold : (NodeContext n e -> acc -> acc) -> acc -> Graph n e -> acc
 fold f acc graph =
-    case Focus.get anyNode graph of
-        Just ctx -> f ctx <| Lazy.lazy <| \_ -> fold f acc (remove ctx.node.id graph)
-        Nothing -> acc
+  case Focus.get anyNode graph of
+    Just ctx ->
+      fold f (f ctx acc) (remove ctx.node.id graph)
+    Nothing -> acc
 
 
+{-| Maps each node context to another one. This may change edge and node labels
+(including their types), possibly the node ids and also add or remove edges
+entirely through modifying the adjacency lists.
+
+The following is a specification for reverseEdges:
+
+    flipEdges ctx = { ctx | incoming = ctx.outgoing, outgoing = ctx.incoming }
+    graph = fromNodesAndEdges [Node 1 "1", Node 2 "2"] [Edge 1 2 "->"]
+    reverseEdges graph == mapContexts flipEdges graph
+-}
 mapContexts : (NodeContext n1 e1 -> NodeContext n2 e2) -> Graph n1 e1 -> Graph n2 e2
-mapContexts f = fold (\ctx -> Lazy.force >> insert (f ctx)) empty
+mapContexts f =
+  fold (\ctx -> insert (f ctx)) empty
 
 
+{-| Maps over node labels, possibly changing their types. Leaves the graph
+topology intact.
+-}
 mapNodes : (n1 -> n2) -> Graph n1 e -> Graph n2 e
-mapNodes f = fold (\ctx -> Lazy.force >> insert { ctx | node <- { id = ctx.node.id, label = f ctx.node.label } }) empty
+mapNodes f =
+  fold
+    (\ctx ->
+      insert
+        { ctx
+        | node <- { id = ctx.node.id, label = f ctx.node.label }
+        })
+    empty
 
 
+{-| Maps over edge labels, possibly chaing their types. Leaves the graph
+topology intact.
+-}
 mapEdges : (e1 -> e2) -> Graph n e1 -> Graph n e2
 mapEdges f =
-    fold (\ctx -> Lazy.force >> insert
-                  { ctx
-                  | outgoing <- IntDict.map (\n e -> f e) ctx.outgoing
-                  , incoming <- IntDict.map (\n e -> f e) ctx.incoming })
-         empty
+  fold
+    (\ctx ->
+      insert
+        { ctx
+        | outgoing <- IntDict.map (\n e -> f e) ctx.outgoing
+        , incoming <- IntDict.map (\n e -> f e) ctx.incoming
+        })
+    empty
 
 
 {- CHARACTERIZATION -}
 
 
-isSimple : Graph n e -> Bool
-isSimple graph =
-    let checkForLoop ctx rest =
-            IntDict.member ctx.node.id ctx.incoming || Lazy.force rest
-    in graph
-        |> fold checkForLoop False
-        |> not
-
 
 {- GRAPH OPS -}
 
 
+{-| `symmetricClosure edgeMerger graph` is the
+[symmetric closure](https://en.wikipedia.org/wiki/Symmetric_closure) of `graph`,
+e.g. the undirected equivalent, where for every edge in `graph` there is also
+a corresponding reverse edge. This implies that `ctx.incoming` == `ctx.outgoing`
+for each node context `ctx`.
+
+`edgeMerger` resolves conflicts for when there are already edges in both
+directions, e.g. the graph isn't truly directed. It is guaranteed that
+`edgeMerger` will only be called with the smaller node id passed in first
+to enforce consitency of merging decisions.
+
+    graph = fromNodesAndEdges [Node 1 "1", Node 2 "2"] [Edge 1 2 "->"]
+    onlyUndirectedEdges ctx =
+      ctx.incoming == ctx.outgoing
+    merger from to outgoingLabel incomingLabel =
+      outgoingLabel -- quite arbitrary, will not be called for the above graph
+    fold
+      (\ctx acc -> acc || onlyUndirectedEdges ctx)
+      (symmetricClosure merger graph)
+      == True
+-}
 symmetricClosure : (NodeId -> NodeId -> e -> e -> e) -> Graph n e -> Graph n e
 symmetricClosure edgeMerger =
-    -- We could use mapContexts, but this will be more efficient.
-    let orderedEdgeMerger from to outgoing incoming =
-            if from <= to
-            then edgeMerger from to outgoing incoming
-            else edgeMerger to from incoming outgoing
-        updateContext nodeId ctx =
-            let edges = IntDict.uniteWith (orderedEdgeMerger nodeId) ctx.outgoing ctx.incoming
-            in { ctx | outgoing <- edges, incoming <- edges }
-    in Focus.update graphRep (IntDict.map updateContext)
+  -- We could use mapContexts, but this will be more efficient.
+  let
+    orderedEdgeMerger from to outgoing incoming =
+      if from <= to
+      then edgeMerger from to outgoing incoming
+      else edgeMerger to from incoming outgoing
+    updateContext nodeId ctx =
+      let
+        edges = IntDict.uniteWith (orderedEdgeMerger nodeId) ctx.outgoing ctx.incoming
+      in
+        { ctx | outgoing <- edges, incoming <- edges }
+    in
+      Focus.update graphRep (IntDict.map updateContext)
 
 
+{-| Reverses the direction of every edge in the graph.
+-}
 reverseEdges : Graph n e -> Graph n e
 reverseEdges =
-    let updateContext nodeId ctx =
-            { ctx | outgoing <- ctx.incoming, incoming <- ctx.outgoing }
-    in Focus.update graphRep (IntDict.map updateContext)
+  let
+    updateContext nodeId ctx =
+      { ctx
+      | outgoing <- ctx.incoming
+      , incoming <- ctx.outgoing
+      }
+  in
+    Focus.update graphRep (IntDict.map updateContext)
 
 
 {- Traversals -}
 
 
+{-| Selects the next neighbors for the currently visited node in the traversal.
+-}
 type alias NeighborSelector n e =
-    NodeContext n e
-    -> List NodeId
+  NodeContext n e
+  -> List NodeId
 
 
+{-| A node visitor specialized for depth-first traversal. Along with the node
+context of the currently visited node, the current accumulated value is passed.
+The visitor then has the chance to both modify the value at discovery of the
+node through the first return value and also provide a finishing
+transformation which is called with the value after all children were processed
+and the node is about to be finished.
+
+In the cases where you don't need access to the value both at dicovery and at
+finish, look into `onDiscovery` and `onFinish`.
+-}
 type alias DfsNodeVisitor n e acc =
-    NodeContext n e
-    -> acc
-    -> (acc, acc -> acc)
+  NodeContext n e
+  -> acc
+  -> (acc, acc -> acc)
 
 
+{-| A generic node visitor just like that in the ordinary `fold` function.
+-}
 type alias SimpleNodeVisitor n e acc =
-    NodeContext n e
-    -> acc
-    -> acc
+  NodeContext n e
+  -> acc
+  -> acc
 
 
+{-| A good default for selecting neighbors is to just go along outgoing edges:
+
+    alongOutgoingEdges ctx =
+      IntDict.keys (ctx.outgoing)
+
+`dfs`/`bfs` use this as their selecting strategy.
+-}
 alongOutgoingEdges : NeighborSelector n e
 alongOutgoingEdges ctx =
-    IntDict.keys (ctx.outgoing)
+  IntDict.keys (ctx.outgoing)
 
 
+{-| Transform a `SimpleNodeVisitor` into an equivalent `DfsNodeVisitor`, which
+will be called upon node discovery. This eases probiding `DfsNodeVisitor`s in
+the default case:
+
+    dfsPreOrder : Graph n e  -> List (NodeContext n e)
+    dfsPreOrder graph =
+      dfs (onDiscovery (::)) [] graph
+-}
 onDiscovery : SimpleNodeVisitor n e acc -> DfsNodeVisitor n e acc
 onDiscovery visitor ctx acc =
-    (visitor ctx acc, identity)
+  (visitor ctx acc, identity)
 
 
+{-| Transform a `SimpleNodeVisitor` into an equivalent `DfsNodeVisitor`, which
+will be called upon node finish. This eases probiding `DfsNodeVisitor`s in
+the default case:
+
+    dfsPostOrder : Graph n e  -> List (NodeContext n e)
+    dfsPostOrder graph =
+      dfs (onFinish (::)) [] graph
+-}
 onFinish : SimpleNodeVisitor n e acc -> DfsNodeVisitor n e acc
 onFinish visitor ctx acc =
-    (acc, visitor ctx)
+  (acc, visitor ctx)
 
 
 guidedDfs
@@ -710,11 +806,10 @@ heightLevels graph =
     let
       countIndegrees =
            fold
-             (\ctx dict ->
+             (\ctx ->
                  IntDict.insert
                    ctx.node.id
-                   (IntDict.size ctx.incoming)
-                   (Lazy.force dict))
+                   (IntDict.size ctx.incoming))
              IntDict.empty
 
       subtract a b =

@@ -5,7 +5,6 @@ import Debug
 import IntDict exposing (IntDict)
 import Graph exposing (Graph, Node, Edge, NodeContext)
 import Focus exposing (Focus)
-import Lazy exposing (Lazy)
 
 import ElmTest.Assertion exposing (..)
 import ElmTest.Test exposing (..)
@@ -195,7 +194,7 @@ tests =
             assertEqual
               21
               (dressUp
-                 |> Graph.fold (\ctx -> Lazy.force >> (+) ctx.node.id) 0)
+                 |> Graph.fold (\ctx -> (+) ctx.node.id) 0)
         ]
 
     mapTests =
@@ -228,7 +227,7 @@ tests =
               (dressUp
                  |> Graph.symmetricClosure (\_ _ e _ -> e)
                  |> Graph.fold (\ctx acc ->
-                      ctx.incoming == ctx.outgoing && Lazy.force acc) True)
+                      ctx.incoming == ctx.outgoing && acc) True)
         , test "reverseEdges" <|
             assertEqual
               (dressUp

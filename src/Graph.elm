@@ -18,9 +18,11 @@ module Graph
   -- Characterization
 
   -- Traversals
-  , NeighborSelector, SimpleNodeVisitor, DfsNodeVisitor
-  , alongOutgoingEdges, alongIncomingEdges, onDiscovery, onFinish
-  , dfs, dfsTree, dfsForest, guidedDfs
+  , NeighborSelector, alongOutgoingEdges, alongIncomingEdges, SimpleNodeVisitor
+  -- DFS
+  , DfsNodeVisitor, onDiscovery, onFinish, dfs, dfsTree, dfsForest, guidedDfs
+  -- BFS
+  , BfsNodeVisitor, ignoreDistance, bfs, guidedBfs
 
   -- Topological sort
   , heightLevels, topologicalSort
@@ -721,37 +723,6 @@ type alias NeighborSelector n e =
   -> List NodeId
 
 
-{-| A node visitor specialized for depth-first traversal. Along with the node
-context of the currently visited node, the current accumulated value is passed.
-The visitor then has the chance to both modify the value at discovery of the
-node through the first return value and also provide a finishing
-transformation which is called with the value after all children were processed
-and the node is about to be finished.
-
-In the cases where you don't need access to the value both at dicovery and at
-finish, look into `onDiscovery` and `onFinish`.
--}
-type alias DfsNodeVisitor n e acc =
-  NodeContext n e
-  -> acc
-  -> (acc, acc -> acc)
-
-
-type alias BfsNodeVisitor n e acc =
-  NodeContext n e
-  -> Int
-  -> acc
-  -> acc
-
-
-{-| A generic node visitor just like that in the ordinary `fold` function.
--}
-type alias SimpleNodeVisitor n e acc =
-  NodeContext n e
-  -> acc
-  -> acc
-
-
 {-| A good default for selecting neighbors is to just go along outgoing edges:
 
     alongOutgoingEdges ctx =
@@ -772,6 +743,36 @@ alongOutgoingEdges ctx =
 alongIncomingEdges : NeighborSelector n e
 alongIncomingEdges ctx =
   IntDict.keys (ctx.incoming)
+
+
+{-| A generic node visitor just like that in the ordinary `fold` function.
+There are combinators that make these usable for both depth-first traversal
+(`onDiscovery`, `onFinish`) and breadth-first traversal (`ignoreDistance`).
+-}
+type alias SimpleNodeVisitor n e acc =
+  NodeContext n e
+  -> acc
+  -> acc
+
+
+{- DFS -}
+
+
+{-| A node visitor specialized for depth-first traversal. Along with the node
+context of the currently visited node, the current accumulated value is passed.
+The visitor then has the chance to both modify the value at discovery of the
+node through the first return value and also provide a finishing
+transformation which is called with the value after all children were processed
+and the node is about to be finished.
+
+In the cases where you don't need access to the value both at dicovery and at
+finish, look into `onDiscovery` and `onFinish`.
+-}
+type alias DfsNodeVisitor n e acc =
+  NodeContext n e
+  -> acc
+  -> (acc, acc -> acc)
+
 
 {-| Transform a `SimpleNodeVisitor` into an equivalent `DfsNodeVisitor`, which
 will be called upon node discovery. This eases probiding `DfsNodeVisitor`s in
@@ -890,6 +891,50 @@ dfsForest seeds graph =
     guidedDfs alongOutgoingEdges visitNode seeds [] graph |> fst
 
 
+{- BFS -}
+
+
+{-| A specialized node visitor for breadth-first traversal. Compared to a
+`SimpleNodeVisitor`, there is an additional `Int` parameter for the current
+node's distance from the root node (the root has distance 0).
+
+If you don't need the additional information, you can turn a `SimpleNodeVisitor`
+into a `BfsNodeVisitor` by calling `ignoreDistance`.
+-}
+type alias BfsNodeVisitor n e acc =
+  NodeContext n e
+  -> Int
+  -> acc
+  -> acc
+
+
+{-| Turns a `SimpleNodeVisitor` into a `BfsNodeVisitor` by igoring the distance
+parameter. This is useful for when the visitor should be agnostic of the
+traversal (bread-first or depth-first or even just `fold`).
+
+    bfsLevelOrder graph =
+      bfs (ignoreDistance (::)) [] graph
+-}
+ignoreDistance : SimpleNodeVisitor n e acc -> BfsNodeVisitor n e acc
+ignoreDistance visit ctx _ acc =
+  visit ctx acc
+
+
+{-| The `bfs` function is not powerful enough? Go for this beast.
+
+`guidedBfs selectNeighbors visitNode seeds acc graph` will perform a breadth-first
+traversal on `graph` starting with a queue of `seeds`. The children of each node
+will be selected with `selectNeighbors` (see `NeighborSelector`), the visiting
+of nodes is handled by `visitNode` (c.f. `BfsNodeVisitor`), folding `acc` over
+the graph.
+
+When there are not any more nodes to be visited, the function will return the
+accumulated value together with the unvisited rest of `graph`.
+
+    bfsLevelOrder graph =
+      -- NodeId 1 is just a wild guess here
+      guidedBfs alongOutgoingEdges (ignoreDistance (::)) [1] [] graph
+-}
 guidedBfs
     :  NeighborSelector n e
     -> BfsNodeVisitor n e acc
@@ -925,6 +970,16 @@ guidedBfs selectNeighbors visitNode seeds acc graph =
                 go seeds' acc' (remove next graph)
   in
     go (enqueueMany 0 seeds Queue.empty) acc graph
+
+
+{-| An off-the-shelf breadth-first traversal. It will visit all components of the
+graph in no guaranteed order, discovering nodes `alongOutgoingEdges`.
+See the docs of `BfsNodeVisitor` on how to supply such a beast. There are also
+examples on how to use `bfs`.
+-}
+bfs : BfsNodeVisitor n e acc -> acc -> Graph n e -> acc
+bfs visitNode acc graph =
+  guidedBfs alongOutgoingEdges visitNode (nodeIds graph) acc graph |> fst
 
 
 {-| Computes the height function of a given graph. This is a more general

@@ -19,6 +19,7 @@ module Graph
 
   -- Traversals
   , NeighborSelector, SimpleNodeVisitor, DfsNodeVisitor
+  , alongOutgoingEdges, alongIncomingEdges, onDiscovery, onFinish
   , dfs, dfsTree, dfsForest, guidedDfs
 
   -- Topological sort
@@ -32,11 +33,6 @@ module Graph
 If you find that this module is hard to use or the documentation
 is insufficient, consider opening an issue for that (and possibly even a
 pull request :)).
-
-I was inspired by Martin Erwig's original idea realized in the
-[functional graph library](http://hackage.haskell.org/package/fgl-5.5.2.1), but
-I also tried to keep it as simple as possible, bringing the neatness of Elm to
-graph libraries.
 
 Internally, we use the `elm-intdict` package for efficient dynamic graph
 representation.
@@ -62,8 +58,9 @@ representation.
 # Characterization
 
 # Traversals
-## Aliases
+## Neighbor selectors and visitors
 @docs NeighborSelector, SimpleNodeVisitor, DfsNodeVisitor
+@docs alongOutgoingEdges, alongIncomingEdges, onDiscovery, onFinish
 ## Depth-first
 @dfs, dfsTree, dfsForest, guidedDfs
 
@@ -747,6 +744,15 @@ alongOutgoingEdges : NeighborSelector n e
 alongOutgoingEdges ctx =
   IntDict.keys (ctx.outgoing)
 
+
+{-| A less common way for selecting neighbors is to follow incoming edges:
+
+    alongIncomingEdges ctx =
+      IntDict.keys (ctx.incoming)
+-}
+alongIncomingEdges : NeighborSelector n e
+alongIncomingEdges ctx =
+  IntDict.keys (ctx.incoming)
 
 {-| Transform a `SimpleNodeVisitor` into an equivalent `DfsNodeVisitor`, which
 will be called upon node discovery. This eases probiding `DfsNodeVisitor`s in

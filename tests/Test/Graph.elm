@@ -276,7 +276,10 @@ tests =
 
     examples =
       suite "examples"
-        [
+        [ test "README - iWantToWearShoes" <|
+            assertEqual
+              ["Shorts", "Pants", "Socks", "Shoes"] 
+              iWantToWearShoes
         ]
 
   in
@@ -284,3 +287,18 @@ tests =
       [ unitTests
       , examples
       ]
+
+
+-- EXAMPLE SECTION
+
+-- This is from the README
+iWantToWearShoes: List String
+iWantToWearShoes =
+  Graph.guidedDfs
+    Graph.alongIncomingEdges            -- which edges to follow
+    (Graph.onDiscovery (\ctx list ->    -- append node labels on finish
+      ctx.node.label :: list))
+    [6 {- "Shoes" NodeId -}]            -- start with the node labelled "Shoes"
+    []                                  -- accumulate starting with the empty list
+    dressUp                             -- traverse our dressUp graph from above
+    |> fst                              -- ignores the untraversed rest of the graph

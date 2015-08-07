@@ -590,10 +590,22 @@ so that the fold can exit early when the suspended accumulator is not forced.
 -}
 fold : (NodeContext n e -> acc -> acc) -> acc -> Graph n e -> acc
 fold f acc graph =
-  case Focus.get anyNode graph of
-    Just ctx ->
-      fold f (f ctx acc) (remove ctx.node.id graph)
-    Nothing -> acc
+  let
+    go acc graph' =
+      let
+        maybeContext =
+          graph'
+            |> nodeIdRange
+            |> Maybe.map fst
+            |> flip Maybe.andThen (\id -> get id graph) -- get should never return Nothing
+      in
+        case maybeContext of
+          Just ctx ->
+            go (f ctx acc) (remove ctx.node.id graph')
+          Nothing ->
+            acc
+  in
+    go acc graph
 
 
 {-| Maps each node context to another one. This may change edge and node labels
@@ -725,6 +737,13 @@ type alias DfsNodeVisitor n e acc =
   -> (acc, acc -> acc)
 
 
+type alias BfsNodeVisitor n e acc =
+  NodeContext n e
+  -> Int
+  -> acc
+  -> acc
+
+
 {-| A generic node visitor just like that in the ordinary `fold` function.
 -}
 type alias SimpleNodeVisitor n e acc =
@@ -796,12 +815,12 @@ accumulated value together with the unvisited rest of `graph`.
       guidedDfs alongOutgoingEdges (onDiscovery (::)) [1] [] graph
 -}
 guidedDfs
-    :  NeighborSelector n e
-    -> DfsNodeVisitor n e acc
-    -> List NodeId
-    -> acc
-    -> Graph n e
-    -> (acc, Graph n e)
+  :  NeighborSelector n e
+  -> DfsNodeVisitor n e acc
+  -> List NodeId
+  -> acc
+  -> Graph n e
+  -> (acc, Graph n e)
 guidedDfs selectNeighbors visitNode seeds acc graph =
   let
     go seeds acc graph =
@@ -817,17 +836,11 @@ guidedDfs selectNeighbors visitNode seeds acc graph =
               go seeds' acc graph
             Just ctx ->
               let
-                neighbors =
-                  selectNeighbors ctx
-
-                visitChildren acc' =
-                  go neighbors acc' graph' |> fst
-
                 (accAfterDiscovery, finishNode) =
                   visitNode ctx acc
 
                 (accBeforeFinish, graph') =
-                  go neighbors accAfterDiscovery (remove next graph)
+                  go (selectNeighbors ctx) accAfterDiscovery (remove next graph)
 
                 accAfterFinish =
                   finishNode accBeforeFinish
@@ -875,6 +888,43 @@ dfsForest seeds graph =
       ([], \children -> Tree.inner ctx children :: trees)
   in
     guidedDfs alongOutgoingEdges visitNode seeds [] graph |> fst
+
+
+guidedBfs
+    :  NeighborSelector n e
+    -> BfsNodeVisitor n e acc
+    -> List NodeId
+    -> acc
+    -> Graph n e
+    -> (acc, Graph n e)
+guidedBfs selectNeighbors visitNode seeds acc graph =
+  let
+    enqueueMany distance xs queue =
+      xs
+        |> List.map (\x -> (x, distance))
+        |> List.foldl Queue.push queue
+    go seeds acc graph =
+      case Queue.pop seeds of
+        Nothing -> -- We are done with this connected component, so we return acc and the rest of the graph
+          (acc, graph)
+        Just ((next, distance), seeds') ->
+          case get next graph of
+            -- This can actually happen since we don't filter for already visited nodes.
+            -- That would be an opportunity for time-memory-tradeoff.
+            -- E.g. Passing along a set of visited nodeIds.
+            Nothing ->
+              go seeds' acc graph
+            Just ctx ->
+              let
+                acc' =
+                  visitNode ctx distance acc
+
+                seeds' =
+                  enqueueMany (distance + 1) (selectNeighbors ctx) seeds'
+              in
+                go seeds' acc' (remove next graph)
+  in
+    go (enqueueMany 0 seeds Queue.empty) acc graph
 
 
 {-| Computes the height function of a given graph. This is a more general

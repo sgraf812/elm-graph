@@ -1,32 +1,45 @@
 module Graph
-    ( NodeId, Node, Edge, Adjacency, NodeContext, Graph
-    -- Building
-    , empty, update, insert, remove
-    -- Query
-    , isEmpty, size, member, get, nodeIdRange
-    -- List representations
-    , nodeIds, nodes, edges, fromNodesAndEdges
-    -- Foci
-    , id, label, from, to, node, incoming, outgoing
-    , nodeById, anyNode
+  -- Data
+  ( NodeId, Node, Edge, Adjacency, NodeContext, Graph
+  -- Building
+  , empty, update, insert, remove
+  -- Query
+  , isEmpty, size, member, get, nodeIdRange
+  -- List representations
+  , nodeIds, nodes, edges, fromNodesAndEdges
+  -- Foci
+  , id, label, from, to, node, incoming, outgoing
+  , nodeById, anyNode
 
+  -- Transforms
+  , fold, mapContexts, mapNodes, mapEdges
+  , symmetricClosure, reverseEdges
 
-    , fold
-    , mapContexts
-    , mapNodes
-    , mapEdges
+  -- Characterization
 
-    , isSimple
-    , symmetricClosure, reverseEdges
-    , dfs, guidedDfs
---    , bfsList, bfs, guidedBfs
-    , heightLevels, topologicalSort
+  -- Traversals
+  , NeighborSelector, SimpleNodeVisitor, DfsNodeVisitor
+  , dfs, dfsTree, dfsForest, guidedDfs
 
-    , toString'
-    ) where
+  -- Topological sort
+  , heightLevels, topologicalSort
 
+  -- String representation
+  , toString'
+  ) where
 
-{-|
+{-| This module contains the primitives to build, update and traverse graphs.
+If you find that this module is hard to use or the documentation
+is insufficient, consider opening an issue for that (and possibly even a
+pull request :)).
+
+I was inspired by Martin Erwig's original idea realized in the
+[functional graph library](http://hackage.haskell.org/package/fgl-5.5.2.1), but
+I also tried to keep it as simple as possible, bringing the neatness of Elm to
+graph libraries.
+
+Internally, we use the `elm-intdict` package for efficient dynamic graph
+representation.
 
 # Data
 @docs NodeId, Node, Edge, Adjacency, NodeContext, Graph
@@ -44,19 +57,23 @@ module Graph
 @docs id, label, from, to, node, incoming, outgoing, nodeById, anyNode
 
 # Transforms
-@docs fold, mapContexts, mapNodes, mapEdges, reverseEdges, symmetricsClosure
+@docs fold, mapContexts, mapNodes, mapEdges, reverseEdges, symmetricClosure
 
 # Characterization
-@docs isSimple
 
 # Traversals
-@docs NeighborSelector, DfsNodeVisitor, SimpleNodeVisitor, dfs, guidedDfs, bfs, guidedBfs
+## Aliases
+@docs NeighborSelector, SimpleNodeVisitor, DfsNodeVisitor
+## Depth-first
+@dfs, dfsTree, dfsForest, guidedDfs
 
 # Topological Sort
 @docs topologicalSort, heightLevels
 
--}
+# String representation
+@docs toString'
 
+-}
 
 import Graph.Tree as Tree exposing (Tree, Forest)
 import IntDict as IntDict exposing (IntDict)
@@ -233,7 +250,7 @@ applyEdgeDiff nodeId diff graphRep =
 
 {-| Analogous to `Dict.update`, `update nodeId updater graph` will find
 the node context of the node with id `nodeId` in `graph`. It will then call `updater`
-with that `Just` that node context if that node was found and `Nothing`
+with `Just` that node context if that node was found and `Nothing`
 otherwise. `updater` can then return `Just` an updated node context
 (modifying edges is also permitted!) or delete the node by returning
 `Nothing`. The updated `graph` is returned.
@@ -244,8 +261,10 @@ properties).
 
 The other operations can be implemented in terms of `update` like this:
 
-    remove nodeId graph = update nodeId (always Nothing) graph
-    insert nodeContext graph = update nodeContext.node.id (always (Just nodeContext)) graph
+    remove nodeId graph =
+      update nodeId (always Nothing) graph
+    insert nodeContext graph =
+      update nodeContext.node.id (always (Just nodeContext)) graph
 -}
 update : NodeId -> (Maybe (NodeContext n e) -> Maybe (NodeContext n e)) -> Graph n e -> Graph n e
 update nodeId updater =
@@ -755,6 +774,21 @@ onFinish visitor ctx acc =
   (acc, visitor ctx)
 
 
+{-| The `dfs*` functions are not powerful enough? Go for this beast.
+
+`guidedDfs selectNeighbors visitNode seeds acc graph` will perform a depth-first
+traversal on `graph` starting with a stack of `seeds`. The children of each node
+will be selected with `selectNeighbors` (see `NeighborSelector`), the visiting
+of nodes is handled by `visitNode` (c.f. `DfsNodeVisitor`), folding `acc` over
+the graph.
+
+When there are not any more nodes to be visited, the function will return the
+accumulated value together with the unvisited rest of `graph`.
+
+    dfsPreOrder graph =
+      -- NodeId 1 is just a wild guess here
+      guidedDfs alongOutgoingEdges (onDiscovery (::)) [1] [] graph
+-}
 guidedDfs
     :  NeighborSelector n e
     -> DfsNodeVisitor n e acc
@@ -763,101 +797,164 @@ guidedDfs
     -> Graph n e
     -> (acc, Graph n e)
 guidedDfs selectNeighbors visitNode seeds acc graph =
-    let go seeds acc graph =
-            case seeds of
-                [] -> -- We are done with this connected component, so we return acc and the rest of the graph
-                    (acc, graph)
-                next :: seeds' ->
-                    case get next graph of
-                        -- This can actually happen since we don't filter for already visited nodes.
-                        Nothing -> go seeds' acc graph
-                        Just ctx ->
-                            let neighbors = selectNeighbors ctx
-                                visitChildren acc' = go neighbors acc' graph' |> fst
-                                (accAfterDiscovery, finishNode) = visitNode ctx acc
-                                (accBeforeFinish, graph') = go neighbors accAfterDiscovery (remove next graph)
-                                accAfterFinish = finishNode accBeforeFinish
-                            in go seeds' accAfterFinish graph'
-    in go seeds acc graph
+  let
+    go seeds acc graph =
+      case seeds of
+        [] -> -- We are done with this connected component, so we return acc and the rest of the graph
+          (acc, graph)
+        next :: seeds' ->
+          case get next graph of
+            -- This can actually happen since we don't filter for already visited nodes.
+            -- That would be an opportunity for time-memory-tradeoff.
+            -- E.g. Passing along a set of visited nodeIds.
+            Nothing ->
+              go seeds' acc graph
+            Just ctx ->
+              let
+                neighbors =
+                  selectNeighbors ctx
+
+                visitChildren acc' =
+                  go neighbors acc' graph' |> fst
+
+                (accAfterDiscovery, finishNode) =
+                  visitNode ctx acc
+
+                (accBeforeFinish, graph') =
+                  go neighbors accAfterDiscovery (remove next graph)
+
+                accAfterFinish =
+                  finishNode accBeforeFinish
+              in
+                go seeds' accAfterFinish graph'
+  in
+    go seeds acc graph
 
 
+{-| An off-the-shelf depth-first traversal. It will visit all components of the
+graph in no guaranteed order, discovering nodes `alongOutgoingEdges`.
+See the docs of `DfsNodeVisitor` on how to supply such a beast. There are also
+examples on how to use `dfs`.
+-}
 dfs : DfsNodeVisitor n e acc -> acc -> Graph n e -> acc
 dfs visitNode acc graph =
-    guidedDfs alongOutgoingEdges visitNode (nodeIds graph) acc graph |> fst
+  guidedDfs alongOutgoingEdges visitNode (nodeIds graph) acc graph |> fst
 
 
+{-| `dfsTree seed graph` computes a depth-first [spanning tree](https://en.wikipedia.org/wiki/Spanning_tree) of the component
+in `graph` starting from `seed` `alongOutgoingEdges`. This function is exemplary for needing to
+utilize the whole power of `DfsNodeVisitor`.
+-}
 dfsTree : NodeId -> Graph n e -> Tree (NodeContext n e)
 dfsTree seed graph =
-   case dfsForest [seed] graph of
-       [] -> Tree.empty
-       [tree] -> tree
-       _ -> Debug.crash "dfsTree: There can't be more than one DFS tree. This invariant is violated, please report this bug."
+  case dfsForest [seed] graph of
+    [] ->
+      Tree.empty
+    [tree] ->
+      tree
+    _ ->
+      Debug.crash "dfsTree: There can't be more than one DFS tree. This invariant is violated, please report this bug."
 
 
+{-| `dfsForest seeds graph` computes a depth-first spanning `Forest` of the
+components in `graph` spanned by `seeds` `alongOutgoingEdges`.
+
+A traversal over this forest would be equivalent to a depth-first traversal
+over the original graph.
+-}
 dfsForest : List NodeId -> Graph n e -> Forest (NodeContext n e)
 dfsForest seeds graph =
-    let visitNode ctx trees =
-            ([], Tree.inner ctx >> flip (::) trees)
-    in guidedDfs alongOutgoingEdges visitNode seeds [] graph |> fst
+  let
+    visitNode ctx trees =
+      ([], \children -> Tree.inner ctx children :: trees)
+  in
+    guidedDfs alongOutgoingEdges visitNode seeds [] graph |> fst
 
 
+{-| Computes the height function of a given graph. This is a more general
+[topological sort](https://en.wikipedia.org/wiki/Topological_sorting),
+where independent nodes are in the same height level (e.g. the same list
+index). A valid topological sort is trivially obtained by flattening the
+result of this function.
+
+The height function is useful for solving the maximal clique problem for
+certain [perfect graphs](https://en.wikipedia.org/wiki/Perfect_graph)
+([comparability graphs](https://en.wikipedia.org/wiki/Comparability_graph)).
+There is the excellent reference
+[Algorithmic Graph Theory and Perfect Graphs](http://dl.acm.org/citation.cfm?id=984029).
+-}
 heightLevels : Graph n e -> List (List (NodeContext n e))
 heightLevels graph =
-    let
-      countIndegrees =
-           fold
-             (\ctx ->
-                 IntDict.insert
-                   ctx.node.id
-                   (IntDict.size ctx.incoming))
-             IntDict.empty
+  let
+    countIndegrees =
+      fold
+        (\ctx ->
+          IntDict.insert
+          ctx.node.id
+          (IntDict.size ctx.incoming))
+        IntDict.empty
 
-      subtract a b =
+    subtract a b =
           b - a
 
-      decrementAndNoteSources id _ (nextLevel, indegrees) =
+    decrementAndNoteSources id _ (nextLevel, indegrees) =
+      let
+        indegrees' = IntDict.update id (Maybe.map (subtract 1)) indegrees
+      in
+        case IntDict.get id indegrees' of
+          Just 0 ->
+            case get id graph of
+              Just ctx -> (ctx :: nextLevel, indegrees')
+              Nothing -> Debug.crash "Graph.heightLevels: Could not get a node of a graph which should be there by invariants. Please file a bug report!"
+          Nothing ->
+            (nextLevel, indegrees')
+
+    decrementIndegrees source nextLevel indegrees =
+      IntDict.foldl decrementAndNoteSources (nextLevel, indegrees) source.outgoing
+
+    go currentLevel nextLevel indegrees graph =
+      case (currentLevel, nextLevel) of
+        ([], []) ->
+          [[]]
+        ([], _) ->
+          [] :: go nextLevel [] indegrees graph
+        (source :: currentLevel', _) ->
           let
-            indegrees' = IntDict.update id (Maybe.map (subtract 1)) indegrees
+            (nextLevel', indegrees') = decrementIndegrees source nextLevel indegrees
           in
-            case IntDict.get id indegrees' of
-                Just 0 ->
-                  case get id graph of
-                    Just ctx -> (ctx :: nextLevel, indegrees')
-                    Nothing -> Debug.crash "Graph.heightLevels: Could not get a node of a graph which should be there by invariants. Please file a bug report!"
-                Nothing -> (nextLevel, indegrees')
-
-      decrementIndegrees source nextLevel indegrees =
-          IntDict.foldl decrementAndNoteSources (nextLevel, indegrees) source.outgoing
-
-      go currentLevel nextLevel indegrees graph =
-          case (currentLevel, nextLevel) of
-              ([], []) ->
-                  [[]]
-              ([], _) ->
-                  [] :: go nextLevel [] indegrees graph
-              (source :: currentLevel', _) ->
-                  let
-                    (nextLevel', indegrees') = decrementIndegrees source nextLevel indegrees
-                  in
-                    case go currentLevel' nextLevel' indegrees' (remove source.node.id graph) of
-                      [] -> Debug.crash "Graph.heightLevels: Reached a branch which is impossible by invariants. Please file a bug report!"
-                      level :: levels -> (source :: level) :: levels
-    in
-      go [] [] (countIndegrees graph) graph
+            case go currentLevel' nextLevel' indegrees' (remove source.node.id graph) of
+              [] ->
+                Debug.crash "Graph.heightLevels: Reached a branch which is impossible by invariants. Please file a bug report!"
+              level :: levels ->
+                (source :: level) :: levels
+  in
+    go [] [] (countIndegrees graph) graph
 
 
+{-| Computes a
+[topological ordering](https://en.wikipedia.org/wiki/Topological_sorting) of the
+given graph.
+-}
 topologicalSort : Graph n e -> List (NodeContext n e)
 topologicalSort graph =
-    graph
-     |> dfsForest (nodeIds graph)
-     |> List.concatMap Tree.preOrderList
+  graph
+    |> dfsForest (nodeIds graph)
+    |> List.concatMap Tree.preOrderList
 
 
 {- toString -}
 
+{-| Returns a string representation of the graph in the format of
+`fromNodesAndEdges`:
+
+    graph = fromNodesAndEdges [Node 1 "1", Node 2 "2"] [Edge 1 2 "->"]
+    toString' graph
+      == "Graph.fromNodesAndEdges [Node 1 \"1\", Node 2 \"2\"] [Edge 1 2 \"->\"]"
+-}
 toString' : Graph n e -> String
 toString' graph =
-    let nodeList = nodes graph
-        edgeList = edges graph
-    in
-        "Graph.fromNodesAndEdges " ++ toString nodeList ++ " " ++ toString edgeList
+  let
+    nodeList = nodes graph
+    edgeList = edges graph
+  in
+    "Graph.fromNodesAndEdges " ++ toString nodeList ++ " " ++ toString edgeList

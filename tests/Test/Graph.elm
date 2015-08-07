@@ -216,8 +216,7 @@ tests =
 
     characterizationTests =
       suite "characterization"
-        [ test "dressUp is simple" <|
-            assert (Graph.isSimple dressUp)
+        [
         ]
 
     graphOpsTests =

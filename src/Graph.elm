@@ -60,11 +60,12 @@ representation.
 # Characterization
 
 # Traversals
-## Neighbor selectors and visitors
-@docs NeighborSelector, SimpleNodeVisitor, DfsNodeVisitor
-@docs alongOutgoingEdges, alongIncomingEdges, onDiscovery, onFinish
+## Neighbor selectors and node visitors
+@docs NeighborSelector, alongOutgoingEdges, alongIncomingEdges, SimpleNodeVisitor
 ## Depth-first
-@dfs, dfsTree, dfsForest, guidedDfs
+@docs DfsNodeVisitor, onDiscovery, onFinish, dfs, dfsTree, dfsForest, guidedDfs
+## Bread-first
+@docs BfsNodeVisitor, ignoreDistance, bfs, guidedBfs
 
 # Topological Sort
 @docs topologicalSort, heightLevels

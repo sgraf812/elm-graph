@@ -240,21 +240,44 @@ tests =
                  |> List.sort)
         ]
 
+    isValidTopologicalOrdering ordering =
+      ordering
+        |> List.foldl
+            (\ctx maybeIds ->
+              maybeIds `Maybe.andThen` \ids ->
+              if List.all (flip IntDict.member ids) (IntDict.keys ctx.incoming)
+              then ids |> IntDict.insert ctx.node.id () |> Just
+              else Nothing)
+            (Just IntDict.empty)
+        |> isJust
+
     topologicalSortTests =
       suite "topologicalSort"
-        [ test "works on dressUp" <|
+        [ test "topologicalSort" <|
             assert
               (dressUp
-                 |> Graph.topologicalSort
-                 |> List.foldl
-                      (\ctx maybeIds ->
-                        maybeIds `Maybe.andThen` \ids ->
-                        if List.all (flip IntDict.member ids) (IntDict.keys ctx.incoming)
-                        then ids |> IntDict.insert ctx.node.id () |> Just
-                        else Nothing)
-                      (Just IntDict.empty)
-                 |> isJust)
+                |> Graph.topologicalSort
+                |> isValidTopologicalOrdering)
+        , test "heightLevels" <|
+            assert
+              (dressUp
+                |> Graph.heightLevels
+                |> List.concat
+                |> isValidTopologicalOrdering)
         ]
+
+
+    bfsTests =
+      suite "BFS"
+        [ test "breadth-first node order" <|
+            assertEqual
+              [0, 2, 5, 6, 1, 3, 4]
+              (dressUp
+                |> Graph.bfs (Graph.ignorePath (::)) []
+                |> List.map (.node >> .id)
+                |> List.reverse)
+        ]
+
 
     unitTests =
       suite "unit tests"
@@ -272,6 +295,7 @@ tests =
         , characterizationTests
         , graphOpsTests
         , topologicalSortTests
+        , bfsTests
         ]
 
     examples =
@@ -365,21 +389,21 @@ symmetricClosureExample =
 onDiscoveryExample : () -- Just let it compile
 onDiscoveryExample =
   let
-    dfsPreOrder : Graph n e  -> List (NodeContext n e)
-    dfsPreOrder graph =
+    dfsPostOrder : Graph n e  -> List (NodeContext n e)
+    dfsPostOrder graph =
       Graph.dfs (Graph.onDiscovery (::)) [] graph
   in
-    dfsPreOrder Graph.empty |> \_ -> ()
+    dfsPostOrder Graph.empty |> \_ -> ()
 
 
 onFinishExample : () -- Just let it compile
 onFinishExample =
   let
-    dfsPostOrder : Graph n e  -> List (NodeContext n e)
-    dfsPostOrder graph =
+    dfsPreOrder : Graph n e  -> List (NodeContext n e)
+    dfsPreOrder graph =
       Graph.dfs (Graph.onFinish (::)) [] graph
   in
-    dfsPostOrder Graph.empty |> \_ -> ()
+    dfsPreOrder Graph.empty |> \_ -> ()
 
 
 ignorePathExample : () -- Just let it compile
@@ -387,6 +411,8 @@ ignorePathExample =
   let
     bfsLevelOrder : Graph n e -> List (NodeContext n e)
     bfsLevelOrder graph =
-      Graph.bfs (Graph.ignorePath (::)) [] graph
+      graph
+        |> Graph.bfs (Graph.ignorePath (::)) []
+        |> List.reverse
   in
     bfsLevelOrder Graph.empty |> \_ -> ()

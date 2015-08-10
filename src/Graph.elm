@@ -777,11 +777,11 @@ type alias DfsNodeVisitor n e acc =
 
 
 {-| Transform a `SimpleNodeVisitor` into an equivalent `DfsNodeVisitor`, which
-will be called upon node discovery. This eases probiding `DfsNodeVisitor`s in
+will be called upon node discovery. This eases providing `DfsNodeVisitor`s in
 the default case:
 
-    dfsPreOrder : Graph n e  -> List (NodeContext n e)
-    dfsPreOrder graph =
+    dfsPostOrder : Graph n e  -> List (NodeContext n e)
+    dfsPostOrder graph =
       dfs (onDiscovery (::)) [] graph
 -}
 onDiscovery : SimpleNodeVisitor n e acc -> DfsNodeVisitor n e acc
@@ -790,11 +790,11 @@ onDiscovery visitor ctx acc =
 
 
 {-| Transform a `SimpleNodeVisitor` into an equivalent `DfsNodeVisitor`, which
-will be called upon node finish. This eases probiding `DfsNodeVisitor`s in
+will be called upon node finish. This eases providing `DfsNodeVisitor`s in
 the default case:
 
-    dfsPostOrder : Graph n e  -> List (NodeContext n e)
-    dfsPostOrder graph =
+    dfsPreOrder : Graph n e  -> List (NodeContext n e)
+    dfsPreOrder graph =
       dfs (onFinish (::)) [] graph
 -}
 onFinish : SimpleNodeVisitor n e acc -> DfsNodeVisitor n e acc
@@ -919,7 +919,9 @@ traversal (breadth-first or depth-first or even just `fold`).
 
     bfsLevelOrder : List (NodeContext n e)
     bfsLevelOrder graph =
-      bfs (ignorePath (::)) [] graph
+      graph
+        |> bfs (ignorePath (::)) []
+        |> List.reverse
 -}
 ignorePath : SimpleNodeVisitor n e acc -> BfsNodeVisitor n e acc
 ignorePath visit path _ acc =
@@ -992,7 +994,19 @@ examples on how to use `bfs`.
 -}
 bfs : BfsNodeVisitor n e acc -> acc -> Graph n e -> acc
 bfs visitNode acc graph =
-  guidedBfs alongOutgoingEdges visitNode (nodeIds graph) acc graph |> fst
+  let
+    (acc', restGraph') =
+      guidedBfs alongOutgoingEdges visitNode (nodeIds graph) acc graph
+  in
+    case nodeIdRange graph of
+      Nothing ->
+        acc
+      Just (id, _) ->
+        let
+          (acc', restGraph') =
+            guidedBfs alongOutgoingEdges visitNode [id] acc graph
+        in
+          bfs visitNode acc' restGraph'
 
 
 {-| Computes the height function of a given graph. This is a more general

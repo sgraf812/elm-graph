@@ -278,8 +278,14 @@ tests =
       suite "examples"
         [ test "README - iWantToWearShoes" <|
             assertEqual
-              ["Shorts", "Pants", "Socks", "Shoes"] 
+              ["Shorts", "Pants", "Socks", "Shoes"]
               iWantToWearShoes
+        , test "insert" <|
+            assert insertExample
+        , test "fold" <|
+            assert foldExample
+        , test "mapContexts" <|
+            assert mapContextsExample
         ]
 
   in
@@ -290,9 +296,10 @@ tests =
 
 
 -- EXAMPLE SECTION
+-- The code of the more complex examples is exercised here
 
 -- This is from the README
-iWantToWearShoes: List String
+iWantToWearShoes : List String
 iWantToWearShoes =
   Graph.guidedDfs
     Graph.alongIncomingEdges            -- which edges to follow
@@ -302,3 +309,84 @@ iWantToWearShoes =
     []                                  -- accumulate starting with the empty list
     dressUp                             -- traverse our dressUp graph from above
     |> fst                              -- ignores the untraversed rest of the graph
+
+
+insertExample : Bool
+insertExample =
+  let
+    graph1 = Graph.fromNodesAndEdges [Node 1 "1"] []
+    newNode =
+      { node = Node 2 "2"
+      , incoming = IntDict.singleton 1 () -- so there will be an edge from 1 to 2
+      , outgoing = IntDict.empty
+      }
+    graph2 = Graph.insert newNode graph1
+  in
+    Graph.size graph2 == 2
+
+
+foldExample : Bool
+foldExample =
+  let
+    hasLoop ctx =
+      IntDict.member ctx.node.id ctx.incoming
+    graph =
+      Graph.fromNodesAndEdges [Node 1 "1", Node 2 "2"] [Edge 1 2 "->"]
+    -- The graph should not have any loop.
+  in
+    Graph.fold (\ctx acc -> acc || hasLoop ctx) False graph == False
+
+
+mapContextsExample : Bool
+mapContextsExample =
+  let
+    flipEdges ctx = { ctx | incoming <- ctx.outgoing, outgoing <- ctx.incoming }
+    graph = Graph.fromNodesAndEdges [Node 1 "1", Node 2 "2"] [Edge 1 2 "->"]
+  in
+    Graph.reverseEdges graph == Graph.mapContexts flipEdges graph
+
+
+symmetricClosureExample : Bool
+symmetricClosureExample =
+  let
+    graph = Graph.fromNodesAndEdges [Node 1 "1", Node 2 "2"] [Edge 1 2 "->"]
+    onlyUndirectedEdges ctx =
+      ctx.incoming == ctx.outgoing
+    merger from to outgoingLabel incomingLabel =
+      outgoingLabel -- quite arbitrary, will not be called for the above graph
+  in
+    Graph.fold
+      (\ctx acc -> acc && onlyUndirectedEdges ctx)
+      True
+      (Graph.symmetricClosure merger graph)
+      == True
+
+
+onDiscoveryExample : () -- Just let it compile
+onDiscoveryExample =
+  let
+    dfsPreOrder : Graph n e  -> List (NodeContext n e)
+    dfsPreOrder graph =
+      Graph.dfs (Graph.onDiscovery (::)) [] graph
+  in
+    dfsPreOrder Graph.empty |> \_ -> ()
+
+
+onFinishExample : () -- Just let it compile
+onFinishExample =
+  let
+    dfsPostOrder : Graph n e  -> List (NodeContext n e)
+    dfsPostOrder graph =
+      Graph.dfs (Graph.onFinish (::)) [] graph
+  in
+    dfsPostOrder Graph.empty |> \_ -> ()
+
+
+ignorePathExample : () -- Just let it compile
+ignorePathExample =
+  let
+    bfsLevelOrder : Graph n e -> List (NodeContext n e)
+    bfsLevelOrder graph =
+      Graph.bfs (Graph.ignorePath (::)) [] graph
+  in
+    bfsLevelOrder Graph.empty |> \_ -> ()

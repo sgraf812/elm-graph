@@ -22,7 +22,7 @@ module Graph
   -- DFS
   , DfsNodeVisitor, onDiscovery, onFinish, dfs, dfsTree, dfsForest, guidedDfs
   -- BFS
-  , BfsNodeVisitor, ignoreDistance, bfs, guidedBfs
+  , BfsNodeVisitor, ignorePath, bfs, guidedBfs
 
   -- Topological sort
   , heightLevels, topologicalSort
@@ -65,7 +65,7 @@ representation.
 ## Depth-first
 @docs DfsNodeVisitor, onDiscovery, onFinish, dfs, dfsTree, dfsForest, guidedDfs
 ## Bread-first
-@docs BfsNodeVisitor, ignoreDistance, bfs, guidedBfs
+@docs BfsNodeVisitor, ignorePath, bfs, guidedBfs
 
 # Topological Sort
 @docs topologicalSort, heightLevels
@@ -617,7 +617,7 @@ entirely through modifying the adjacency lists.
 
 The following is a specification for reverseEdges:
 
-    flipEdges ctx = { ctx | incoming = ctx.outgoing, outgoing = ctx.incoming }
+    flipEdges ctx = { ctx | incoming <- ctx.outgoing, outgoing <- ctx.incoming }
     graph = fromNodesAndEdges [Node 1 "1", Node 2 "2"] [Edge 1 2 "->"]
     reverseEdges graph == mapContexts flipEdges graph
 -}
@@ -679,7 +679,8 @@ to enforce consitency of merging decisions.
     merger from to outgoingLabel incomingLabel =
       outgoingLabel -- quite arbitrary, will not be called for the above graph
     fold
-      (\ctx acc -> acc || onlyUndirectedEdges ctx)
+      (\ctx acc -> acc && onlyUndirectedEdges ctx)
+      True
       (symmetricClosure merger graph)
       == True
 -}
@@ -714,7 +715,7 @@ reverseEdges =
     Focus.update graphRep (IntDict.map updateContext)
 
 
-{- Traversals -}
+{- TRAVERSALS -}
 
 
 {-| Selects the next neighbors for the currently visited node in the traversal.
@@ -748,7 +749,7 @@ alongIncomingEdges ctx =
 
 {-| A generic node visitor just like that in the ordinary `fold` function.
 There are combinators that make these usable for both depth-first traversal
-(`onDiscovery`, `onFinish`) and breadth-first traversal (`ignoreDistance`).
+(`onDiscovery`, `onFinish`) and breadth-first traversal (`ignorePath`).
 -}
 type alias SimpleNodeVisitor n e acc =
   NodeContext n e
@@ -896,29 +897,37 @@ dfsForest seeds graph =
 
 
 {-| A specialized node visitor for breadth-first traversal. Compared to a
-`SimpleNodeVisitor`, there is an additional `Int` parameter for the current
-node's distance from the root node (the root has distance 0).
+`SimpleNodeVisitor`, the path of contexts from the root to the current
+node is passed instead of just the current node's context. Additionally, the
+distance from the root is passed as an `Int` (the root has distance 0 and it
+holds always that `length path == distance - 1`).
 
 If you don't need the additional information, you can turn a `SimpleNodeVisitor`
-into a `BfsNodeVisitor` by calling `ignoreDistance`.
+into a `BfsNodeVisitor` by calling `ignorePath`.
 -}
 type alias BfsNodeVisitor n e acc =
-  NodeContext n e
+  List (NodeContext n e)
   -> Int
   -> acc
   -> acc
 
 
-{-| Turns a `SimpleNodeVisitor` into a `BfsNodeVisitor` by igoring the distance
-parameter. This is useful for when the visitor should be agnostic of the
-traversal (bread-first or depth-first or even just `fold`).
+{-| Turns a `SimpleNodeVisitor` into a `BfsNodeVisitor` by ignoring the path
+and distance parameters.
+This is useful for when the visitor should be agnostic of the
+traversal (breadth-first or depth-first or even just `fold`).
 
+    bfsLevelOrder : List (NodeContext n e)
     bfsLevelOrder graph =
-      bfs (ignoreDistance (::)) [] graph
+      bfs (ignorePath (::)) [] graph
 -}
-ignoreDistance : SimpleNodeVisitor n e acc -> BfsNodeVisitor n e acc
-ignoreDistance visit ctx _ acc =
-  visit ctx acc
+ignorePath : SimpleNodeVisitor n e acc -> BfsNodeVisitor n e acc
+ignorePath visit path _ acc =
+  case path of
+    [] ->
+      Debug.crash "Graph.ignorePath: No algorithm should ever pass an empty path into this BfsNodeVisitor."
+    ctx :: path' ->
+      visit ctx acc
 
 
 {-| The `bfs` function is not powerful enough? Go for this beast.
@@ -934,7 +943,7 @@ accumulated value together with the unvisited rest of `graph`.
 
     bfsLevelOrder graph =
       -- NodeId 1 is just a wild guess here
-      guidedBfs alongOutgoingEdges (ignoreDistance (::)) [1] [] graph
+      guidedBfs alongOutgoingEdges (ignorePath (::)) [1] [] graph
 -}
 guidedBfs
     :  NeighborSelector n e
@@ -945,15 +954,15 @@ guidedBfs
     -> (acc, Graph n e)
 guidedBfs selectNeighbors visitNode seeds acc graph =
   let
-    enqueueMany distance xs queue =
-      xs
-        |> List.map (\x -> (x, distance))
+    enqueueMany distance parentPath nodeIds queue =
+      nodeIds
+        |> List.map (\id -> (id, parentPath, distance))
         |> List.foldl Queue.push queue
     go seeds acc graph =
       case Queue.pop seeds of
         Nothing -> -- We are done with this connected component, so we return acc and the rest of the graph
           (acc, graph)
-        Just ((next, distance), seeds') ->
+        Just ((next, parentPath, distance), seeds') ->
           case get next graph of
             -- This can actually happen since we don't filter for already visited nodes.
             -- That would be an opportunity for time-memory-tradeoff.
@@ -962,15 +971,18 @@ guidedBfs selectNeighbors visitNode seeds acc graph =
               go seeds' acc graph
             Just ctx ->
               let
-                acc' =
-                  visitNode ctx distance acc
+                path =
+                  ctx :: parentPath
 
-                seeds' =
-                  enqueueMany (distance + 1) (selectNeighbors ctx) seeds'
+                acc' =
+                  visitNode path distance acc
+
+                seeds'' =
+                  enqueueMany (distance + 1) path (selectNeighbors ctx) seeds'
               in
-                go seeds' acc' (remove next graph)
+                go seeds'' acc' (remove next graph)
   in
-    go (enqueueMany 0 seeds Queue.empty) acc graph
+    go (enqueueMany 0 [] seeds Queue.empty) acc graph
 
 
 {-| An off-the-shelf breadth-first traversal. It will visit all components of the
@@ -1057,11 +1069,7 @@ topologicalSort graph =
 {- toString -}
 
 {-| Returns a string representation of the graph in the format of
-`fromNodesAndEdges`:
-
-    graph = fromNodesAndEdges [Node 1 "1", Node 2 "2"] [Edge 1 2 "->"]
-    toString' graph
-      == "Graph.fromNodesAndEdges [Node 1 \"1\", Node 2 \"2\"] [Edge 1 2 \"->\"]"
+`Graph.fromNodesAndEdges [<nodes>] [<edges>]
 -}
 toString' : Graph n e -> String
 toString' graph =

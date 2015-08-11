@@ -1,4 +1,4 @@
-# Graph
+# Graph [![Build Status](https://travis-ci.org/sgraf812/elm-graph.svg)](https://travis-ci.org/sgraf812/elm-graph)
 An neat graph library for Elm.
 
 Got confused about what to wear when putting on shoes? This will help you out:

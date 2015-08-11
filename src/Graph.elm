@@ -2,11 +2,11 @@ module Graph
   -- Data
   ( NodeId, Node, Edge, Adjacency, NodeContext, Graph
   -- Building
-  , empty, update, insert, remove
+  , empty, update, insert, remove, inducedSubgraph
   -- Query
   , isEmpty, size, member, get, nodeIdRange
   -- List representations
-  , nodeIds, nodes, edges, fromNodesAndEdges
+  , nodeIds, nodes, edges, fromNodesAndEdges, fromNodeLabelsAndEdgePairs
   -- Foci
   , id, label, from, to, node, incoming, outgoing
   , nodeById, anyNode
@@ -26,6 +26,8 @@ module Graph
 
   -- Topological sort
   , heightLevels, topologicalSort
+  -- Strongly connected components
+  , stronglyConnectedComponents
 
   -- String representation
   , toString'
@@ -43,13 +45,13 @@ representation.
 @docs NodeId, Node, Edge, Adjacency, NodeContext, Graph
 
 # Building
-@docs empty, update, insert, remove
+@docs empty, update, insert, remove, inducedSubgraph
 
 # Query
 @docs isEmpty, size, member, get, nodeIdRange
 
 # List representations
-@docs nodeIds, nodes, edges, fromNodesAndEdges
+@docs nodeIds, nodes, edges, fromNodesAndEdges, fromNodeLabelsAndEdgePairs
 
 # Foci
 @docs id, label, from, to, node, incoming, outgoing, nodeById, anyNode
@@ -69,6 +71,9 @@ representation.
 
 # Topological Sort
 @docs topologicalSort, heightLevels
+
+# Strongly Connected Components
+@docs stronglyConnectedComponents
 
 # String representation
 @docs toString'
@@ -194,9 +199,9 @@ computeEdgeDiff old new =
             (Just (Remove _), (Insert newLbl)) ->
               Just (Insert newLbl)
             (Just (Remove _), (Remove _)) ->
-              Debug.crash "Graph.computeEdgeDiff: Collected two removals for the same edge. This is an error in the implementation of Data.Graph and you should file a bug report!"
+              Debug.crash "Graph.computeEdgeDiff: Collected two removals for the same edge. This is an error in the implementation of Graph and you should file a bug report!"
             (Just (Insert _), _) ->
-              Debug.crash "Graph.computeEdgeDiff: Collected inserts before removals. This is an error in the implementation of Data.Graph and you should file a bug report!"
+              Debug.crash "Graph.computeEdgeDiff: Collected inserts before removals. This is an error in the implementation of Graph and you should file a bug report!"
             (Nothing, eu) ->
               Just eu
       in
@@ -208,8 +213,6 @@ computeEdgeDiff old new =
     case (old, new) of
       (Nothing, Nothing) ->
         emptyDiff
-      (Just ctx, Just ctx) ->
-        emptyDiff
       (Just rem, Nothing) ->
         { outgoing = IntDict.empty |> collect Remove rem.incoming
         , incoming = IntDict.empty |> collect Remove rem.outgoing
@@ -219,9 +222,12 @@ computeEdgeDiff old new =
         , incoming = IntDict.empty |> collect Insert ins.outgoing
         }
       (Just rem, Just ins) ->
-        { outgoing = IntDict.empty |> collect Remove rem.incoming |> collect Insert ins.incoming
-        , incoming = IntDict.empty |> collect Remove rem.outgoing |> collect Insert ins.outgoing
-        }
+        if rem == ins
+        then emptyDiff
+        else
+          { outgoing = IntDict.empty |> collect Remove rem.incoming |> collect Insert ins.incoming
+          , incoming = IntDict.empty |> collect Remove rem.outgoing |> collect Insert ins.outgoing
+          }
 
 
 applyEdgeDiff : NodeId -> EdgeDiff e -> GraphRep n e -> GraphRep n e
@@ -276,15 +282,25 @@ update nodeId updater =
         old =
           IntDict.get nodeId rep
 
+        filterInvalidEdges ctx =
+          IntDict.filter (\id _ -> id == ctx.node.id || IntDict.member id rep)
+
+        cleanUpEdges ctx =
+          ctx
+            |> Focus.update incoming (filterInvalidEdges ctx)
+            |> Focus.update outgoing (filterInvalidEdges ctx)
+
         new =
-          updater old
+          old
+            |> updater
+            |> Maybe.map cleanUpEdges
 
         diff =
           computeEdgeDiff old new
       in
         rep
           |> applyEdgeDiff nodeId diff
-          |> IntDict.update nodeId updater
+          |> IntDict.update nodeId (always new)
   in
     Focus.update graphRep updater'
 
@@ -321,6 +337,22 @@ is a no-op:
 remove : NodeId -> Graph n e -> Graph n e
 remove nodeId graph =
   update nodeId (always Nothing) graph
+
+
+{-| The [induced subgraph](http://mathworld.wolfram.com/Edge-InducedSubgraph.html)
+of a number of node ids.
+-}
+inducedSubgraph : List NodeId -> Graph n e -> Graph n e
+inducedSubgraph nodeIds graph =
+  let
+    insertContextById nodeId acc =
+      case get nodeId graph of
+        Just ctx ->
+          insert ctx acc
+        Nothing ->
+          acc
+  in
+    List.foldl insertContextById empty nodeIds
 
 
 {- QUERY -}
@@ -441,6 +473,8 @@ edges graph =
 
 {-| `fromNodesAndEdges nodes edges` constructs a graph from the supplied `nodes`
 and `edges`. This is the most comfortable way to construct a graph as a whole.
+Oftentimes it is even more convenient to use `fromNodeLabelsAndEdgePairs` when
+edges are unlabeled anyway and auto incremented node ids are OK.
 
 The following constructs a graph with 2 nodes with a string label, connected
 by an edge labeled "->".
@@ -470,6 +504,32 @@ fromNodesAndEdges nodes edges =
           |> IntDict.update edge.to (Maybe.map updateIncoming)
     in
       Graph (List.foldl addEdge nodeRep edges)
+
+
+{-| A more convenient version of `fromNodesAndEdges`, when edges are unlabeled
+and there are no special requirements on node ids.
+
+`fromNodeLabelsAndEdgePairs labels edges` implicitly assigns node ids according
+to the label's index in `labels` and the list of edge pairs is converted to
+unlabeled `Edge`s.
+
+    graph = fromNodeLabelsAndEdgePairs ['a', 'b'] [(0, 1)]
+-}
+fromNodeLabelsAndEdgePairs : List n -> List (NodeId, NodeId) -> Graph n ()
+fromNodeLabelsAndEdgePairs labels edges =
+  let
+    nodes =
+      labels
+        |> List.foldl
+            (\lbl (id, nodes) -> (id + 1, Node id lbl :: nodes))
+            (0, [])
+        |> snd
+
+    edges' =
+      List.map (\(from, to) -> Edge from to ()) edges
+  in
+    fromNodesAndEdges nodes edges'
+
 
 
 {- FOCI -}
@@ -890,7 +950,9 @@ dfsForest seeds graph =
     visitNode ctx trees =
       ([], \children -> Tree.inner ctx children :: trees)
   in
-    guidedDfs alongOutgoingEdges visitNode seeds [] graph |> fst
+    guidedDfs alongOutgoingEdges visitNode seeds [] graph
+      |> fst
+      |> List.reverse
 
 
 {- BFS -}
@@ -1077,7 +1139,29 @@ topologicalSort : Graph n e -> List (NodeContext n e)
 topologicalSort graph =
   graph
     |> dfsForest (nodeIds graph)
+    |> List.reverse
     |> List.concatMap Tree.preOrderList
+
+
+{-| Decomposes a graph into its strongly connected components. The resulting
+list is a topological ordering of the component graph.
+-}
+stronglyConnectedComponents : Graph n e -> List (Graph n e)
+stronglyConnectedComponents graph =
+  -- Based on Cormen, using 2 DFS
+  let
+    timestamps =
+      dfs (onFinish (.node >> .id >> (::))) [] graph
+
+    forest =
+      dfsForest timestamps (reverseEdges graph) -- We could optimize out reverseEdges
+
+    components =
+      List.map (Tree.preOrderList >> List.foldr insert empty >> reverseEdges) forest
+  in
+    components
+
+
 
 
 {- toString -}

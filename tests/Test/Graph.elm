@@ -2,8 +2,9 @@ module Test.Graph (tests) where
 
 import String
 import Debug
+import Set exposing (Set)
 import IntDict exposing (IntDict)
-import Graph exposing (Graph, Node, Edge, NodeContext)
+import Graph exposing (Graph, NodeId, Node, Edge, NodeContext)
 import Focus exposing (Focus)
 
 import ElmTest.Assertion exposing (..)
@@ -17,33 +18,62 @@ isJust m =
     _ -> False
 
 
+assertComparing : (a -> b) -> a  -> a -> Assertion
+assertComparing f a b =
+  assertEqual (f a) (f b)
+
+
+edgeTriples : Graph n e -> List (NodeId, NodeId, e)
+edgeTriples =
+  Graph.edges >> List.map (\e -> (e.from, e.to, e.label))
+
+
 dressUp : Graph String ()
 dressUp =
   let
     nodes =
-      [ Node 0 "Shorts"
-      , Node 1 "Socks"
+      [ Node 0 "Socks"
+      , Node 1 "Undershorts"
       , Node 2 "Pants"
-      , Node 3 "Undershirt"
-      , Node 4 "Sweater"
-      , Node 5 "Coat"
-      , Node 6 "Shoes"
+      , Node 3 "Shoes"
+      , Node 4 "Watch"
+      , Node 5 "Shirt"
+      , Node 6 "Belt"
+      , Node 7 "Tie"
+      , Node 8 "Jacket"
       ]
 
     e from to =
       Edge from to ()
 
     edges =
-      [ e 0 2 -- shorts before pants
-      , e 1 6 -- socks before shoes
-      , e 2 5 -- pants before coat
-      , e 2 6 -- pants before shoes
-      , e 3 4 -- underhirt before sweater
-      , e 4 5 -- sweater before coat
+      [ e 0 3 -- socks before shoes
+      , e 1 2 -- undershorts before pants
+      , e 1 3 -- undershorts before shoes
+      , e 2 3 -- pants before shoes
+      , e 2 6 -- pants before belt
+      , e 5 6 -- shirt before belt
+      , e 5 7 -- shirt before tie
+      , e 6 8 -- belt before jacket
+      , e 7 8 -- tie before jacket
       ]
 
   in
     Graph.fromNodesAndEdges nodes edges
+
+
+connectedComponents : Graph Char ()
+connectedComponents =
+  let
+    nodes =
+      ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
+
+    edges =
+      [ (0, 1), (1, 2), (1, 4), (1, 5), (2, 3)
+      , (2, 6), (3, 2), (3, 7), (4, 0), (4, 5)
+      , (5, 6), (6, 5), (6, 7)]
+  in
+    Graph.fromNodeLabelsAndEdgePairs nodes edges
 
 
 noNeighbors : Node String -> NodeContext String ()
@@ -68,42 +98,42 @@ tests =
 
     getTests =
       suite "get"
-        [ test "id 0, the shorts" <|
+        [ test "id 0, the socks" <|
             assertEqual
-              (Just "Shorts")
+              (Just "Socks")
               (dressUp |> Graph.get 0 |> Maybe.map (.node >> .label))
         , test "id 99, Nothing" <| assertEqual Nothing (Graph.get 99 dressUp)
         ]
 
     nodeIdRangeTests =
       suite "nodeIdRange"
-        [ test "dressUp: [0, 6]" <|
+        [ test "dressUp: [0, 8]" <|
             assertEqual
-              (Just (0, 6))
+              (Just (0, 8))
               (Graph.nodeIdRange dressUp)
-        , test "dressUp - 1: [1, 6]" <|
+        , test "dressUp - 0: [1, 8]" <|
             assertEqual
-              (Just (1, 6))
+              (Just (1, 8))
               (dressUp |> Graph.remove 0 |> Graph.nodeIdRange)
-        , test "dressUp - 6: [0, 5]" <|
+        , test "dressUp - 8: [0, 7]" <|
             assertEqual
-              (Just (0, 5))
-              (dressUp |> Graph.remove 6 |> Graph.nodeIdRange)
+              (Just (0, 7))
+              (dressUp |> Graph.remove 8 |> Graph.nodeIdRange)
         ]
 
     listRepTests =
       suite "list conversions"
         [ test "nodeIds" <|
             assertEqual
-              [0, 1, 2, 3, 4, 5, 6]
+              [0, 1, 2, 3, 4, 5, 6, 7, 8]
               (dressUp |> Graph.nodeIds)
         , test "nodes" <|
             assertEqual
-              [0, 1, 2, 3, 4, 5, 6]
+              [0, 1, 2, 3, 4, 5, 6, 7, 8]
               (dressUp |> Graph.nodes |> List.map .id)
         , test "edges" <|
             assertEqual
-              [(0, 2), (1, 6), (2, 5), (2, 6), (3, 4), (4, 5)]
+              [(0, 3), (1, 2), (1, 3), (2, 3), (2, 6), (5, 6), (5, 7), (6, 8), (7, 8)]
               (dressUp
                  |> Graph.edges
                  |> List.map (\e -> (e.from, e.to))
@@ -188,11 +218,22 @@ tests =
                  |> Maybe.map (.outgoing >> IntDict.isEmpty))
         ]
 
+    inducedSubgraphTests =
+      suite "inducedSubgraph"
+        [ test "should not have any dangling edges" <|
+            assertComparing
+              (edgeTriples >> List.sortBy (\(f, t, _) -> (f, t)))
+              (Graph.fromNodesAndEdges
+                [Node 0 'a', Node 1 'b', Node 4 'e']
+                [Edge 0 1 (), Edge 1 4 (), Edge 4 0 ()])
+              (Graph.inducedSubgraph [0, 1, 4] connectedComponents)
+        ]
+
     foldTests =
       suite "fold"
         [ test "sum up ids" <|
             assertEqual
-              21
+              36
               (dressUp
                  |> Graph.fold (\ctx -> (+) ctx.node.id) 0)
         ]
@@ -271,12 +312,33 @@ tests =
       suite "BFS"
         [ test "breadth-first node order" <|
             assertEqual
-              [0, 2, 5, 6, 1, 3, 4]
+              [0, 3, 1, 2, 6, 8, 4, 5, 7]
               (dressUp
                 |> Graph.bfs (Graph.ignorePath (::)) []
                 |> List.map (.node >> .id)
                 |> List.reverse)
         ]
+
+    sccTests =
+      let
+        components =
+          Graph.stronglyConnectedComponents connectedComponents
+
+        sg nodeIds =
+          connectedComponents
+            |> Graph.inducedSubgraph nodeIds
+            |> Graph.toString'
+      in
+        suite "Strongly connected components"
+          [ test "The expected SCCs in order" <|
+              assertEqual
+                [ sg [0, 1, 4] -- "abe"
+                , sg [2, 3]    -- "cd"
+                , sg [5, 6]    -- "ef"
+                , sg [7]       -- "h"
+                ]
+                (List.map Graph.toString' components)
+          ]
 
 
     unitTests =
@@ -290,19 +352,21 @@ tests =
         , insertTests
         , removeTests
         , updateTests
+        , inducedSubgraphTests
         , foldTests
         , mapTests
         , characterizationTests
         , graphOpsTests
         , topologicalSortTests
         , bfsTests
+        , sccTests
         ]
 
     examples =
       suite "examples"
         [ test "README - iWantToWearShoes" <|
             assertEqual
-              ["Shorts", "Pants", "Socks", "Shoes"]
+              ["Pants", "Undershorts", "Socks", "Shoes"]
               iWantToWearShoes
         , test "insert" <|
             assert insertExample
@@ -329,7 +393,7 @@ iWantToWearShoes =
     Graph.alongIncomingEdges            -- which edges to follow
     (Graph.onDiscovery (\ctx list ->    -- append node labels on finish
       ctx.node.label :: list))
-    [6 {- "Shoes" NodeId -}]            -- start with the node labelled "Shoes"
+    [3 {- "Shoes" NodeId -}]            -- start with the node labelled "Shoes"
     []                                  -- accumulate starting with the empty list
     dressUp                             -- traverse our dressUp graph from above
     |> fst                              -- ignores the untraversed rest of the graph

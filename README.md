@@ -8,27 +8,31 @@ dressUp : Graph String () -- node labels are strings, edge labels are empty
 dressUp =
   let
     nodes =
-      [ Node 0 "Shorts"
-      , Node 1 "Socks"
+      [ Node 0 "Socks"
+      , Node 1 "Undershirt"
       , Node 2 "Pants"
-      , Node 3 "Undershirt"
-      , Node 4 "Sweater"
-      , Node 5 "Coat"
-      , Node 6 "Shoes"
+      , Node 3 "Shoes"
+      , Node 4 "Watch"
+      , Node 5 "Shirt"
+      , Node 6 "Belt"
+      , Node 7 "Tie"
+      , Node 8 "Jacket"
       ]
 
     e from to =
       Edge from to ()
 
     edges =
-      [ e 0 2 -- shorts before pants
-      , e 1 6 -- socks before shoes
-      , e 2 5 -- pants before coat
-      , e 2 6 -- pants before shoes
-      , e 3 4 -- underhirt before sweater
-      , e 4 5 -- sweater before coat
+      [ e 0 3 -- socks before shoes
+      , e 1 2 -- undershorts before pants
+      , e 1 3 -- undershorts before shoes
+      , e 2 3 -- pants before shoes
+      , e 2 6 -- pants before belt
+      , e 5 6 -- shirt before belt
+      , e 5 7 -- shirt before tie
+      , e 6 8 -- belt before jacket
+      , e 7 8 -- tie before jacket
       ]
-
   in
     Graph.fromNodesAndEdges nodes edges
 
@@ -39,16 +43,18 @@ iWantToWearShoes =
     Graph.alongIncomingEdges            -- which edges to follow
     (Graph.onDiscovery (\ctx list ->    -- append node labels on finish
       ctx.node.label :: list))
-    [6 {- "Shoes" NodeId -}]            -- start with the node labelled "Shoes"
+    [3 {- "Shoes" NodeId -}]            -- start with the node labelled "Shoes"
     []                                  -- accumulate starting with the empty list
     dressUp                             -- traverse our dressUp graph from above
     |> fst                              -- ignores the untraversed rest of the graph
 
 
-iWantToWearShoes == ["Shorts", "Pants", "Socks", "Shoes"]
+iWantToWearShoes == ["Pants", "Undershorts", "Socks", "Shoes"]
 ```
 
-So better wear shorts, pants and socks with you shoes. Somewhat opinionated.
+So better wear pants, undershorts, pants and socks with your shoes.
+(In case you wonder: There is also a `topologicalSort` function which can compute
+valid linear orderings)
 
 # Credits
 

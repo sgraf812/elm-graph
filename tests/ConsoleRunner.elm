@@ -13,10 +13,8 @@ import IO.Runner as Run
 
 import Test
 
-console : IO ()
-console = Console.runDisplay Test.tests
-
 port requests : Signal Request
-port requests = Run.run responses console
+port requests =
+  Run.run responses (Console.runDisplay Test.tests)
 
 port responses : Signal Response

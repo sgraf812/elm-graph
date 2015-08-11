@@ -1,10 +1,7 @@
 language: haskell
 install:
   - cd tests
-  - cabal install elm-make
-  - cabal install elm-package
-  - curl https://raw.githubusercontent.com/maxsnew/IO/master/elm-io.sh > elm-io.sh
-  - npm install jsdom
-  - npm install elm-test
+  - node --version
+  - npm install -g elm-test
   - elm-package install -y
 script: elm-test ConsoleRunner.elm

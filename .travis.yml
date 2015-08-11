@@ -1,6 +1,7 @@
 language: haskell
 install:
   - cd tests
+  - nvm install 0.12
   - node --version
   - npm install -g elm-test
   - elm-package install -y

@@ -41,7 +41,7 @@ iWantToWearShoes: List String
 iWantToWearShoes =
   Graph.guidedDfs
     Graph.alongIncomingEdges            -- which edges to follow
-    (Graph.onDiscovery (\ctx list ->    -- append node labels on finish
+    (Graph.onDiscovery (\ctx list ->    -- append node labels on discovery
       ctx.node.label :: list))
     [3 {- "Shoes" NodeId -}]            -- start with the node labelled "Shoes"
     []                                  -- accumulate starting with the empty list

@@ -1,5 +1,5 @@
 {
-    "version": "1.0.0",
+    "version": "1.0.1",
     "summary": "Handling graphs the functional way.",
     "repository": "https://github.com/sgraf812/elm-graph.git",
     "license": "BSD3",

@@ -281,7 +281,7 @@ tests =
                  |> List.sort)
         ]
 
-    isValidTopologicalOrdering ordering =
+    isValidTopologicalOrderingOf graph ordering =
       ordering
         |> List.foldl
             (\ctx maybeIds ->
@@ -291,6 +291,7 @@ tests =
               else Nothing)
             (Just IntDict.empty)
         |> isJust
+        |> (&&) (List.length ordering == Graph.size graph)
 
     topologicalSortTests =
       suite "topologicalSort"
@@ -298,13 +299,13 @@ tests =
             assert
               (dressUp
                 |> Graph.topologicalSort
-                |> isValidTopologicalOrdering)
+                |> isValidTopologicalOrderingOf dressUp)
         , test "heightLevels" <|
             assert
               (dressUp
                 |> Graph.heightLevels
                 |> List.concat
-                |> isValidTopologicalOrdering)
+                |> isValidTopologicalOrderingOf dressUp)
         ]
 
 

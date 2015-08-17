@@ -1086,6 +1086,15 @@ There is the excellent reference
 heightLevels : Graph n e -> List (List (NodeContext n e))
 heightLevels graph =
   let
+    sources =
+      fold
+        (\ctx acc ->
+          if IntDict.isEmpty ctx.incoming
+          then ctx :: acc
+          else acc)
+        []
+        graph
+
     countIndegrees =
       fold
         (\ctx ->
@@ -1106,7 +1115,7 @@ heightLevels graph =
             case get id graph of
               Just ctx -> (ctx :: nextLevel, indegrees')
               Nothing -> Debug.crash "Graph.heightLevels: Could not get a node of a graph which should be there by invariants. Please file a bug report!"
-          Nothing ->
+          _ ->
             (nextLevel, indegrees')
 
     decrementIndegrees source nextLevel indegrees =
@@ -1128,7 +1137,7 @@ heightLevels graph =
               level :: levels ->
                 (source :: level) :: levels
   in
-    go [] [] (countIndegrees graph) graph
+    go sources [] (countIndegrees graph) graph
 
 
 {-| Computes a
@@ -1167,7 +1176,7 @@ stronglyConnectedComponents graph =
 {- toString -}
 
 {-| Returns a string representation of the graph in the format of
-`Graph.fromNodesAndEdges [<nodes>] [<edges>]
+`Graph.fromNodesAndEdges [<nodes>] [<edges>]`.
 -}
 toString' : Graph n e -> String
 toString' graph =

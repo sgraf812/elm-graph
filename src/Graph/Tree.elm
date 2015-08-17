@@ -3,7 +3,7 @@ module Graph.Tree
   -- BUILDING
   , empty, leaf, inner, unfoldTree, unfoldForest
   -- QUERY
-  , isEmpty, root
+  , isEmpty, root, size, height
   -- TRAVERSAL
   , levelOrder, levelOrderList
   , preOrder, preOrderList
@@ -21,7 +21,7 @@ There are primitives for building and traversing such a tree.
 @docs empty, leaf, inner, unfoldTree, unfoldForest
 
 # Query
-@docs isEmpty, root
+@docs isEmpty, root, size, height
 
 # Traversal
 
@@ -39,10 +39,10 @@ import Queue exposing (Queue)
 Building such a tree is done with the `empty`, `leaf` and `inner` smart
 constructors. An example for a tree with three leafs and a root node:
 
-    tree = inner 1 [leaf 2, leaf 3, leaf 4] 
+    tree = inner 1 [leaf 2, leaf 3, leaf 4]
 -}
 type Tree label =
-  MkTree (Maybe (label, List (Tree label)))
+  MkTree Int (Maybe (label, List (Tree label)))
 
 
 {-| This is just an alias for a list of trees, called a forest in the
@@ -58,7 +58,7 @@ type alias Forest label =
 {-| Construct an empty tree with no nodes. -}
 empty : Tree label
 empty =
-  MkTree Nothing
+  MkTree 0 Nothing
 
 
 {-| Construct a tree with a single node from a value for the node's label.
@@ -81,7 +81,14 @@ the root of the tree. Empty subtrees are filtered out. An example:
 -}
 inner : label -> List (Tree label) -> Tree label
 inner label children =
-  MkTree (Just (label, List.filter (not << isEmpty) children))
+  let
+    children' =
+      List.filter (not << isEmpty) children
+
+    size' =
+      List.foldl (size >> (+)) 1 children'
+  in
+    MkTree size' (Just (label, children'))
 
 
 {-| Construct a new tree with `unfoldTree next seed`, top to bottom. `next` will be
@@ -135,7 +142,37 @@ it returns `Just (label, childForest)` of the root node.
 root : Tree label -> Maybe (label, Forest label)
 root tree =
   case tree of
-    MkTree maybe -> maybe
+    MkTree _ maybe -> maybe
+
+
+{-| The size of the tree, e.g. the number of nodes.
+
+    tree = inner 0 [inner 1 [leaf 2, leaf 3], inner 4 [leaf 5, leaf 6]]
+    size tree == 7
+-}
+size : Tree label -> Int
+size tree =
+  case tree of
+    MkTree n _ -> n
+
+
+{-| Computes the height of the tree in O(n) time.
+
+    tree = inner 0 [inner 1 [leaf 2, leaf 3], inner 4 [leaf 5, leaf 6]]
+    height tree == 3
+-}
+height : Tree label -> Int
+height tree =
+  let
+    go h t =
+      case root t of
+        Just (_, children) ->
+          children
+            |> List.foldl (go (h + 1) >> max) (h + 1)
+        Nothing ->
+          h
+  in
+    go 0 tree
 
 
 {- TRAVERSAL -}

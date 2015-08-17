@@ -45,6 +45,12 @@ tests =
             assertEqual (Just (42, [])) (Tree.root (Tree.leaf 42))
         , test "root of an empty tree" <|
             assertEqual Nothing (Tree.root Tree.empty)
+        , test "size of a non-empty tree" <|
+            assertEqual (Tree.size traversedTree) 7
+        , test "height of a non-empty tree" <|
+            assertEqual (Tree.height traversedTree) 3
+        , test "height of an empty tree" <|
+            assertEqual (Tree.height Tree.empty) 0
         ]
 
     traversedTree =

@@ -607,8 +607,8 @@ then we could define
     ctx = NodeContext (Node 2 "2") IntDict.empty IntDict.empty
     focus = nodeById 2 => Focus.withDefault ctx => node => label
     graph = fromNodesAndEdges [Node 1 "1", Node 2 "2"] [Edge 1 2 "->"]
-    graph' = Focus.set focus graph "="
-    Focus.get focus graph' == "="
+    graph1 = Focus.set focus graph "="
+    Focus.get focus graph1 == "="
 
 Well, I hope I could bring over the point.
 -}
@@ -654,17 +654,17 @@ so that the fold can exit early when the suspended accumulator is not forced.
 fold : (NodeContext n e -> acc -> acc) -> acc -> Graph n e -> acc
 fold f acc graph =
   let
-    go acc graph' =
+    go acc graph1 =
       let
         maybeContext =
-          graph'
+          graph1
             |> nodeIdRange
             |> Maybe.map fst
             |> flip Maybe.andThen (\id -> get id graph) -- get should never return Nothing
       in
         case maybeContext of
           Just ctx ->
-            go (f ctx acc) (remove ctx.node.id graph')
+            go (f ctx acc) (remove ctx.node.id graph1)
           Nothing ->
             acc
   in
@@ -902,13 +902,13 @@ guidedDfs selectNeighbors visitNode seeds acc graph =
                 (accAfterDiscovery, finishNode) =
                   visitNode ctx acc
 
-                (accBeforeFinish, graph') =
+                (accBeforeFinish, graph1) =
                   go (selectNeighbors ctx) accAfterDiscovery (remove next graph)
 
                 accAfterFinish =
                   finishNode accBeforeFinish
               in
-                go seeds' accAfterFinish graph'
+                go seeds' accAfterFinish graph1
   in
     go seeds acc graph
 
@@ -1057,7 +1057,7 @@ examples on how to use `bfs`.
 bfs : BfsNodeVisitor n e acc -> acc -> Graph n e -> acc
 bfs visitNode acc graph =
   let
-    (acc', restGraph') =
+    (acc', restgraph1) =
       guidedBfs alongOutgoingEdges visitNode (nodeIds graph) acc graph
   in
     case nodeIdRange graph of
@@ -1065,10 +1065,10 @@ bfs visitNode acc graph =
         acc
       Just (id, _) ->
         let
-          (acc', restGraph') =
+          (acc', restgraph1) =
             guidedBfs alongOutgoingEdges visitNode [id] acc graph
         in
-          bfs visitNode acc' restGraph'
+          bfs visitNode acc' restgraph1
 
 
 {-| Computes the height function of a given graph. This is a more general

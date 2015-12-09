@@ -4,8 +4,7 @@ import String
 import Debug
 import Graph.Tree as Tree exposing (Tree, Forest)
 
-import ElmTest.Assertion exposing (..)
-import ElmTest.Test exposing (..)
+import ElmTest exposing (..)
 
 
 size : Tree a -> Int

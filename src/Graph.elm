@@ -194,10 +194,10 @@ computeEdgeDiff old new =
       let
         replaceUpdate old =
           case (old, edgeUpdate label) of
-            (Just (Remove lbl), (Insert lbl)) ->
-              Nothing
-            (Just (Remove _), (Insert newLbl)) ->
-              Just (Insert newLbl)
+            (Just (Remove oldLbl), (Insert newLbl)) ->
+              if oldLbl == newLbl
+              then Nothing
+              else Just (Insert newLbl)
             (Just (Remove _), (Remove _)) ->
               Debug.crash "Graph.computeEdgeDiff: Collected two removals for the same edge. This is an error in the implementation of Graph and you should file a bug report!"
             (Just (Insert _), _) ->
@@ -494,10 +494,10 @@ fromNodesAndEdges nodes edges =
     addEdge edge rep =
       let
         updateOutgoing ctx =
-          { ctx | outgoing <- IntDict.insert edge.to edge.label ctx.outgoing }
+          { ctx | outgoing = IntDict.insert edge.to edge.label ctx.outgoing }
 
         updateIncoming ctx =
-          { ctx | incoming <- IntDict.insert edge.from edge.label ctx.incoming }
+          { ctx | incoming = IntDict.insert edge.from edge.label ctx.incoming }
       in
         rep
           |> IntDict.update edge.from (Maybe.map updateOutgoing)
@@ -539,49 +539,49 @@ fromNodeLabelsAndEdgePairs labels edges =
 -}
 id : Focus { record | id : field } field
 id =
-  Focus.create .id (\update record -> { record | id <- update record.id })
+  Focus.create .id (\update record -> { record | id = update record.id })
 
 
 {-| Focus for the `label` field of `Node` and `Edge`.
 -}
 label : Focus { record | label : field } field
 label =
-  Focus.create .label (\update record -> { record | label <- update record.label })
+  Focus.create .label (\update record -> { record | label = update record.label })
 
 
 {-| Focus for the `from` field of `Edge`.
 -}
 from : Focus { record | from : field } field
 from =
-  Focus.create .from (\update record -> { record | from <- update record.from })
+  Focus.create .from (\update record -> { record | from = update record.from })
 
 
 {-| Focus for the `to` field of `Edge`.
 -}
 to : Focus { record | to : field } field
 to =
-  Focus.create .to (\update record -> { record | to <- update record.to })
+  Focus.create .to (\update record -> { record | to = update record.to })
 
 
 {-| Focus for the `node` field of `NodeContext`.
 -}
 node : Focus { record | node : field } field
 node =
-  Focus.create .node (\update record -> { record | node <- update record.node })
+  Focus.create .node (\update record -> { record | node = update record.node })
 
 
 {-| Focus for the `incoming` field of `NodeContext`.
 -}
 incoming : Focus { record | incoming : field } field
 incoming =
-  Focus.create .incoming (\update record -> { record | incoming <- update record.incoming })
+  Focus.create .incoming (\update record -> { record | incoming = update record.incoming })
 
 
 {-| Focus for the `outgoing` field of `NodeContext`.
 -}
 outgoing : Focus { record | outgoing : field } field
 outgoing =
-  Focus.create .outgoing (\update record -> { record | outgoing <- update record.outgoing })
+  Focus.create .outgoing (\update record -> { record | outgoing = update record.outgoing })
 
 
 graphRep : Focus (Graph n e) (GraphRep n e)
@@ -607,8 +607,8 @@ then we could define
     ctx = NodeContext (Node 2 "2") IntDict.empty IntDict.empty
     focus = nodeById 2 => Focus.withDefault ctx => node => label
     graph = fromNodesAndEdges [Node 1 "1", Node 2 "2"] [Edge 1 2 "->"]
-    graph' = Focus.set focus graph "<-"
-    Focus.get focus graph' == "<-"
+    graph' = Focus.set focus graph "="
+    Focus.get focus graph' == "="
 
 Well, I hope I could bring over the point.
 -}
@@ -677,7 +677,7 @@ entirely through modifying the adjacency lists.
 
 The following is a specification for reverseEdges:
 
-    flipEdges ctx = { ctx | incoming <- ctx.outgoing, outgoing <- ctx.incoming }
+    flipEdges ctx = { ctx | incoming = ctx.outgoing, outgoing = ctx.incoming }
     graph = fromNodesAndEdges [Node 1 "1", Node 2 "2"] [Edge 1 2 "->"]
     reverseEdges graph == mapContexts flipEdges graph
 -}
@@ -695,7 +695,7 @@ mapNodes f =
     (\ctx ->
       insert
         { ctx
-        | node <- { id = ctx.node.id, label = f ctx.node.label }
+        | node = { id = ctx.node.id, label = f ctx.node.label }
         })
     empty
 
@@ -709,8 +709,8 @@ mapEdges f =
     (\ctx ->
       insert
         { ctx
-        | outgoing <- IntDict.map (\n e -> f e) ctx.outgoing
-        , incoming <- IntDict.map (\n e -> f e) ctx.incoming
+        | outgoing = IntDict.map (\n e -> f e) ctx.outgoing
+        , incoming = IntDict.map (\n e -> f e) ctx.incoming
         })
     empty
 
@@ -756,7 +756,7 @@ symmetricClosure edgeMerger =
       let
         edges = IntDict.uniteWith (orderedEdgeMerger nodeId) ctx.outgoing ctx.incoming
       in
-        { ctx | outgoing <- edges, incoming <- edges }
+        { ctx | outgoing = edges, incoming = edges }
     in
       Focus.update graphRep (IntDict.map updateContext)
 
@@ -768,8 +768,8 @@ reverseEdges =
   let
     updateContext nodeId ctx =
       { ctx
-      | outgoing <- ctx.incoming
-      , incoming <- ctx.outgoing
+      | outgoing = ctx.incoming
+      , incoming = ctx.outgoing
       }
   in
     Focus.update graphRep (IntDict.map updateContext)

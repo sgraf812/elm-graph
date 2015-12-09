@@ -1,8 +1,10 @@
 module Main where
 
-import Graphics.Element exposing (Element)
-import ElmTest.Runner.Element as Element
+import Graphics.Element exposing (Element, leftAligned)
+import ElmTest exposing (stringRunner)
+import Text exposing (fromString)
 import Test
 
 main : Element
-main = Element.runDisplay Test.tests
+main =
+  leftAligned (fromString (stringRunner Test.tests))

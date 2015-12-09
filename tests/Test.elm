@@ -4,7 +4,7 @@ module Test (tests) where
 import Test.Graph
 import Test.Graph.Tree
 
-import ElmTest.Test exposing (..)
+import ElmTest exposing (..)
 
 
 tests : Test

@@ -7,8 +7,7 @@ import IntDict exposing (IntDict)
 import Graph exposing (Graph, NodeId, Node, Edge, NodeContext)
 import Focus exposing (Focus)
 
-import ElmTest.Assertion exposing (..)
-import ElmTest.Test exposing (..)
+import ElmTest exposing (..)
 
 
 isJust : Maybe a -> Bool
@@ -429,7 +428,7 @@ foldExample =
 mapContextsExample : Bool
 mapContextsExample =
   let
-    flipEdges ctx = { ctx | incoming <- ctx.outgoing, outgoing <- ctx.incoming }
+    flipEdges ctx = { ctx | incoming = ctx.outgoing, outgoing = ctx.incoming }
     graph = Graph.fromNodesAndEdges [Node 1 "1", Node 2 "2"] [Edge 1 2 "->"]
   in
     Graph.reverseEdges graph == Graph.mapContexts flipEdges graph

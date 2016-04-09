@@ -66,7 +66,7 @@ representation.
 @docs NeighborSelector, alongOutgoingEdges, alongIncomingEdges, SimpleNodeVisitor
 ## Depth-first
 @docs DfsNodeVisitor, onDiscovery, onFinish, dfs, dfsTree, dfsForest, guidedDfs
-## Bread-first
+## Breadth-first
 @docs BfsNodeVisitor, ignorePath, bfs, guidedBfs
 
 # Topological Sort

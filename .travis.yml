@@ -1,11 +1,10 @@
 language: haskell
 install:
   - cd tests/
-  - nvm install 0.12
+  - nvm install 6.2.1
   - npm install -g elm
   - npm install -g elm-test
   - elm-package install -y
 before_script:
-  - elm-make --yes --output raw-test.js ConsoleRunner.elm
-  - bash `find . -regex .*/elm-io.sh` raw-test.js test.js
+  - elm-make --yes --output test.js ConsoleRunner.elm
 script: node test.js

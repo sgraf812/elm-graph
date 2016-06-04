@@ -1,10 +1,11 @@
-module Main where
+module Main exposing (..)
 
-import Graphics.Element exposing (Element, leftAligned)
+import Html exposing (Html)
+import Element exposing (Element, leftAligned)
 import ElmTest exposing (stringRunner)
 import Text exposing (fromString)
 import Test
 
-main : Element
+main : Html Element
 main =
-  leftAligned (fromString (stringRunner Test.tests))
+  Element.toHtml (leftAligned (fromString (stringRunner Test.tests)))

@@ -1,4 +1,4 @@
-module Graph.Tree
+module Graph.Tree exposing
   ( Tree, Forest
   -- BUILDING
   , empty, leaf, inner, unfoldTree, unfoldForest
@@ -8,7 +8,7 @@ module Graph.Tree
   , levelOrder, levelOrderList
   , preOrder, preOrderList
   , postOrder, postOrderList
-  ) where
+  )
 
 
 {-| This module provides a simple tree data type of arbitrary arity (a rose tree).

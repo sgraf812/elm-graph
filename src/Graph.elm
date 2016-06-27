@@ -1,4 +1,4 @@
-module Graph
+module Graph exposing
   -- Data
   ( NodeId, Node, Edge, Adjacency, NodeContext, Graph
   -- Building
@@ -31,7 +31,7 @@ module Graph
 
   -- String representation
   , toString'
-  ) where
+  )
 
 {-| This module contains the primitives to build, update and traverse graphs.
 If you find that this module is hard to use or the documentation

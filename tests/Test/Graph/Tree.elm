@@ -1,4 +1,4 @@
-module Test.Graph.Tree (tests) where
+module Test.Graph.Tree exposing (tests)
 
 import String
 import Debug

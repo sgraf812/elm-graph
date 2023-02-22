@@ -103,7 +103,7 @@ type alias Node n =
   }
 
 
-{-| Represents a directd edge in the graph. In addition
+{-| Represents a directed edge in the graph. In addition
 to start and end node identifiers, a label value can
 be attached to an edge.
 -}
